@@ -1,3 +1,4 @@
 {
-    "idf.currentSetup": "/Users/Krishnaraj/.espressif/v6.0.2/esp-idf"
+  "idf.currentSetup": "/Users/krishnaraj/.espressif/v6.0.2/esp-idf",
+  "idf.customExtraVars": {}
 }
