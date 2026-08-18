@@ -1,0 +1,226 @@
+# Phase 0 — Toolchain & Environment (OMNIS)
+
+Status markers used below:
+- ✅ Verified — you personally ran this and confirmed the output
+- ⬜ Not yet done — written from spec, do this yourself before calling Phase 0 complete
+
+---
+
+## 0. Two separate environments exist for this project — know which one you're in
+
+| | VS Code Devcontainer (`.devcontainer/`) | Native macOS install |
+|---|---|---|
+| IDF version | v6.1-dev (dev branch) | v5.3.1 (stable) |
+| Can reach physical EdgeHax S3 Pro board? | **No** — no `/dev/ttyUSB*`/`/dev/ttyACM*` passthrough configured, only Linux virtual consoles | Yes, via macOS `/dev/cu.*` |
+| Purpose | QEMU emulation (`qemu-system-xtensa` is installed), isolated FreeRTOS experiments | Primary environment — all real hardware work: build, flash, monitor |
+| Requires | Docker Desktop running + "Dev Containers" extension (`ms-vscode-remote.remote-containers`) installed | Nothing beyond steps below |
+
+**Rule going forward: all real board work happens natively. The container is optional, for later QEMU experiments only.**
+
+---
+
+## 1. Prerequisites (native macOS)
+
+```bash
+git --version
+python3 --version   # need 3.9+
+```
+
+✅ Confirmed: Python 3.11.0 present via the official python.org installer at
+`/Library/Frameworks/Python.framework/Versions/3.11/`. A second install, Python 3.14, is
+also present in `/Applications/`. Worth remembering if `idf.py` or `install.sh` ever
+silently picks the wrong interpreter later — not an issue now, just a known fact about
+this machine.
+
+If Python/Git are missing on a fresh machine:
+```bash
+xcode-select --install        # gives you git
+brew install python3          # prefer over relying on macOS system Python
+```
+
+---
+
+## 2. Get the ESP-IDF SDK (separate from your project repo)
+
+IDF is a ~2GB SDK — clone it *outside* your OMNIS project folder.
+
+```bash
+mkdir -p ~/esp
+cd ~/esp
+git clone -b v5.3.1 --recursive https://github.com/espressif/esp-idf.git
+```
+
+Pinned to `v5.3.1` (a stable release branch) deliberately — not `master`/dev. The
+devcontainer runs a `-dev` branch; treat the two as intentionally different, not a bug to
+reconcile. Mixing them casually will produce confusing version-specific bugs.
+
+✅ Confirmed: clone completed, `esp-idf` directory present at `~/esp/esp-idf`.
+
+---
+
+## 3. Run the install script (pulls the Xtensa/RISC-V toolchains)
+
+```bash
+cd ~/esp/esp-idf
+./install.sh esp32s3
+```
+
+**Only install the target(s) you actually own.** `./install.sh esp32s3` installs just the
+S3 toolchain. Do **not** run `./install.sh all` (or bare `./install.sh`) — that pulls
+toolchains for every Espressif chip (ESP32, S2, C2, C3, C5, C6, C61, H2, P4...), multiple
+extra GB, zero benefit for a single-board project. Re-run with a new target later, if
+you ever add a different chip — it's additive, not a locked-in decision.
+
+Note: even for esp32s3, `install.sh` also pulls `riscv32-esp-elf` — this is correct and
+expected, not a mistake. The S3's onboard ULP (low-power coprocessor) is RISC-V-based
+even though the main CPU cores are Xtensa.
+
+### Known failure mode: SSL certificate error
+
+```
+WARNING: Download failure: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: unable to get local issuer certificate (_ssl.c:992)>
+...
+ERROR: Failed to download, and retry count has expired
+```
+
+**Not a network problem.** Python installed via the official python.org `.pkg` ships its
+own bundled CA store, which requires a one-time post-install script to populate. If that
+script never ran, *no* HTTPS download from that Python will verify, ever, until fixed.
+
+Fix, in order of preference:
+```bash
+# 1. Find which Python.org version folder you have:
+ls /Applications/ | grep -i python
+
+# 2. Run its cert installer (adjust version number to match):
+/Applications/Python\ 3.11/Install\ Certificates.command
+
+# 3. Fallback if step 2's folder doesn't exist (e.g. Homebrew Python):
+/Library/Frameworks/Python.framework/Versions/3.11/bin/python3 -m pip install --upgrade certifi
+```
+
+✅ Confirmed on this machine: `Install Certificates.command` ran clean, `certifi` upgraded
+2026.5.20 → 2026.7.22, symlink + permissions updated. Re-running `install.sh esp32s3`
+afterward completed successfully — full toolchain + Python venv (esptool, esp-idf-monitor,
+esp-coredump, etc.) installed with no further errors.
+
+---
+
+## 4. Source the environment (do this **every new terminal session**)
+
+```bash
+. ~/esp/esp-idf/export.sh
+idf.py --version    # should print: ESP-IDF v5.3.1
+```
+
+✅ Confirmed working in macOS Terminal.app.
+
+**Critical, non-obvious behavior confirmed by direct experience on this project:**
+Sourcing `export.sh` only affects the *current shell process*. It is not global, not
+per-machine, not per-project — it's per-terminal-tab. Opening a new terminal window, a
+new VS Code integrated terminal tab, a new SSH session, etc. — each one is a fresh shell
+with no memory of a previous `export.sh` call. `idf.py` will report
+`zsh: command not found: idf.py` in every new session until you source it again there.
+
+This was directly observed: `idf.py build` succeeded in Terminal.app (already sourced)
+while the *same command in a freshly opened VS Code integrated terminal tab* failed with
+`command not found`, despite being the same machine and same project folder open in both.
+
+**Deliberately not automated yet.** An alias (e.g. `alias get_idf='. ~/esp/esp-idf/export.sh'`
+in `~/.zshrc`) is the standard fix, but it's being held off intentionally for now so the
+manual-sourcing behavior stays understood firsthand rather than getting silently
+papered over. Revisit and add the alias once this has become pure friction rather than
+useful signal — a "you'll know when" call, not a fixed exercise count.
+
+---
+
+## 5. Point the toolchain at the OMNIS project
+
+```bash
+cd /Volumes/Projects/OMNIS
+idf.py set-target esp32s3
+```
+
+Rewrites `sdkconfig` for the S3 target; runs a CMake configure pass. Expect a short wait.
+Confirm success by checking for `Build files have been written to...` in the output, and
+that `sdkconfig`'s mtime updates (`ls -la sdkconfig`).
+
+```bash
+idf.py build
+```
+
+✅ Confirmed: clean build.
+```
+OMNIS.bin binary size 0x32a40 bytes. Smallest app partition is 0x100000 bytes. 0xcd5c0 bytes (80%) free.
+Bootloader binary size 0x5260 bytes. 0x2da0 bytes (36%) free.
+Project build complete. To flash, run:
+  idf.py flash
+```
+
+---
+
+## 6. Flash + monitor on real hardware — ⬜ NOT YET DONE
+
+This is the actual gap in Phase 0 right now. Everything above is verified; this section
+is written from spec and needs to be run for real before Phase 0 is genuinely complete —
+particularly the crash-decoding piece, which cannot be learned from documentation alone.
+
+### 6a. Identify the board's serial port
+
+```bash
+ls /dev/cu.*
+```
+Run once with the EdgeHax S3 Pro **unplugged**, then again **plugged in**, and diff the
+two lists by eye — the new entry that appears is your port. Don't guess the name from the
+USB-serial chip datasheet; confirm it directly. Likely candidates depending on the
+board's USB-serial chip: `/dev/cu.SLAB_USBtoUART` (CP210x) or `/dev/cu.usbserial-*` /
+`/dev/cu.wchusbserial*` (CH340).
+
+### 6b. Flash and open the monitor
+
+```bash
+idf.py -p /dev/cu.<your-port-here> flash monitor
+```
+
+`Ctrl+]` exits the monitor back to the shell.
+
+### 6c. Crash decoding — do this deliberately, don't just wait for an accidental crash
+
+Once `hello_world` boots cleanly over serial, deliberately trigger a fault (e.g. a null
+pointer dereference in a throwaway test) to see a real "Guru Meditation Error" and
+backtrace in the monitor output. `idf.py monitor` automatically decodes backtraces using
+`addr2line` under the hood if it can find the matching `.elf` in `build/` — confirm you
+can read a real one before considering this phase closed. This is flagged ⬜ deliberately;
+reading about crash decoding is not the same skill as having decoded one.
+
+---
+
+## 7. Deferred / explicitly not covered yet
+
+These were named as Phase 0 scope but intentionally not exercised yet — listed so they
+aren't silently forgotten, not because they're low priority:
+
+- `menuconfig` navigation (`idf.py menuconfig`) — component config, FreeRTOS-specific
+  settings (tick rate, minimal stack size)
+- `idf.py monitor` keyboard shortcuts beyond `Ctrl+]`
+- `xtensa-esp32s3-elf-gdb` / OpenOCD JTAG debugging (awareness only for now)
+- `esptool.py` direct usage (`chip_id`, `flash_id`, reading partition tables) — separate
+  from `idf.py flash`, which wraps it
+- Git `.gitignore` conventions specific to ESP-IDF (`build/`, `sdkconfig.old`,
+  `managed_components/`) — partially covered by the project's existing `.gitignore`,
+  not yet reviewed line-by-line
+- Vendoring the FreeRTOS-LTS kernel as a custom component (optional/advanced, shelved —
+  reading kernel source via the installed copy at `$IDF_PATH/components/freertos/`
+  achieves the same learning goal with no version-drift risk)
+
+---
+
+## 8. Environment fingerprint (for future debugging reference)
+
+- Machine: MacBook Air, macOS, Apple Silicon (arm64)
+- Native IDF: v5.3.1, cloned to `~/esp/esp-idf`
+- Project path: `/Volumes/Projects/OMNIS`
+- Python: 3.11.0 (python.org installer), also 3.14 present but unused for IDF
+- Devcontainer IDF (separate, QEMU-only): v6.1-dev, target `esp32s3`, `qemu-system-xtensa`
+  present at `/opt/esp/tools/qemu-xtensa/esp_develop_9.2.2_20260417/qemu/bin/`
