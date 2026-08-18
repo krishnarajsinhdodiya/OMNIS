@@ -127,11 +127,19 @@ This was directly observed: `idf.py build` succeeded in Terminal.app (already so
 while the *same command in a freshly opened VS Code integrated terminal tab* failed with
 `command not found`, despite being the same machine and same project folder open in both.
 
-**Deliberately not automated yet.** An alias (e.g. `alias get_idf='. ~/esp/esp-idf/export.sh'`
-in `~/.zshrc`) is the standard fix, but it's being held off intentionally for now so the
-manual-sourcing behavior stays understood firsthand rather than getting silently
-papered over. Revisit and add the alias once this has become pure friction rather than
-useful signal — a "you'll know when" call, not a fixed exercise count.
+✅ Automated: after the sourcing-scoping issue was directly observed (see above — worked
+in Terminal.app, failed with `command not found` in a freshly opened VS Code terminal
+tab), an alias was added to `~/.zshrc`:
+
+```bash
+alias get_idf=". ~/esp/esp-idf/export.sh"
+```
+
+Applied with `source ~/.zshrc`, confirmed working in a brand-new terminal via
+`get_idf && idf.py --version`. This is a *shortcut*, not full silent auto-sourcing —
+`get_idf` must still be typed once per new terminal session. Deliberately not going
+further to auto-source on every shell launch, since that would add overhead to every
+terminal opened for unrelated work, not just ESP-IDF sessions.
 
 ---
 
@@ -160,11 +168,7 @@ Project build complete. To flash, run:
 
 ---
 
-## 6. Flash + monitor on real hardware — ⬜ NOT YET DONE
-
-This is the actual gap in Phase 0 right now. Everything above is verified; this section
-is written from spec and needs to be run for real before Phase 0 is genuinely complete —
-particularly the crash-decoding piece, which cannot be learned from documentation alone.
+## 6. Flash + monitor on real hardware
 
 ### 6a. Identify the board's serial port
 
@@ -173,9 +177,7 @@ ls /dev/cu.*
 ```
 Run once with the EdgeHax S3 Pro **unplugged**, then again **plugged in**, and diff the
 two lists by eye — the new entry that appears is your port. Don't guess the name from the
-USB-serial chip datasheet; confirm it directly. Likely candidates depending on the
-board's USB-serial chip: `/dev/cu.SLAB_USBtoUART` (CP210x) or `/dev/cu.usbserial-*` /
-`/dev/cu.wchusbserial*` (CH340).
+USB-serial chip datasheet; confirm it directly.
 
 ### 6b. Flash and open the monitor
 
@@ -185,14 +187,34 @@ idf.py -p /dev/cu.<your-port-here> flash monitor
 
 `Ctrl+]` exits the monitor back to the shell.
 
-### 6c. Crash decoding — do this deliberately, don't just wait for an accidental crash
+✅ Confirmed: real board flashed and booted successfully. `hello_world` example ran end
+to end — bootloader loaded, partition table read, app booted, `Hello world!` printed,
+heap size reported (389836 bytes free), then the example's built-in 10-second countdown
+triggered a clean self-restart, repeating.
 
-Once `hello_world` boots cleanly over serial, deliberately trigger a fault (e.g. a null
-pointer dereference in a throwaway test) to see a real "Guru Meditation Error" and
-backtrace in the monitor output. `idf.py monitor` automatically decodes backtraces using
-`addr2line` under the hood if it can find the matching `.elf` in `build/` — confirm you
-can read a real one before considering this phase closed. This is flagged ⬜ deliberately;
-reading about crash decoding is not the same skill as having decoded one.
+**Important distinction actually observed at this step, worth keeping:** the restart
+cycle produced output that *looks* like crash-decode output but isn't:
+```
+rst:0xc (RTC_SW_CPU_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+Saved PC:0x40375904
+--- 0x40375904: esp_restart_noos at .../esp32s3/system_internal.c:158
+```
+`RTC_SW_CPU_RST` = software-requested clean restart (this example calls
+`esp_restart()` on purpose after its countdown). The PC resolves to `esp_restart_noos`,
+the normal restart routine — a single, expected frame, not a fault. This confirmed the
+monitor's symbol resolution is working, but it is **not** the same thing as seeing a real
+fault. Do not mistake a clean-restart trace for a crash trace — the reset-reason string
+(`RTC_SW_CPU_RST` vs something like `Guru Meditation Error: ... panic'ed`) is the
+tell.
+
+### 6c. Crash decoding — ⬜ NOT YET DONE
+
+Still the actual gap. Deliberately trigger a real fault (e.g. a null pointer
+dereference in a throwaway line) to see an actual "Guru Meditation Error" panic and a
+genuine multi-frame backtrace, distinct from the clean-restart trace above. `idf.py
+monitor` decodes backtraces via `addr2line` automatically if it can find the matching
+`.elf` in `build/`. This remains ⬜ deliberately — reading about the distinction above is
+not the same as having triggered and read a real one.
 
 ---
 
@@ -201,6 +223,8 @@ reading about crash decoding is not the same skill as having decoded one.
 These were named as Phase 0 scope but intentionally not exercised yet — listed so they
 aren't silently forgotten, not because they're low priority:
 
+- **6c above (real crash/panic + backtrace)** — highest priority remaining item, next
+  session
 - `menuconfig` navigation (`idf.py menuconfig`) — component config, FreeRTOS-specific
   settings (tick rate, minimal stack size)
 - `idf.py monitor` keyboard shortcuts beyond `Ctrl+]`
@@ -213,6 +237,10 @@ aren't silently forgotten, not because they're low priority:
 - Vendoring the FreeRTOS-LTS kernel as a custom component (optional/advanced, shelved —
   reading kernel source via the installed copy at `$IDF_PATH/components/freertos/`
   achieves the same learning goal with no version-drift risk)
+
+See `esp32-command-reference.md` (separate file) for a standing lookup of commands for
+day-to-day board interfacing — this file stays a narrative/status record, that one is
+the quick-reference.
 
 ---
 
