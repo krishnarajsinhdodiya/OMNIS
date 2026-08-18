@@ -207,14 +207,43 @@ fault. Do not mistake a clean-restart trace for a crash trace — the reset-reas
 (`RTC_SW_CPU_RST` vs something like `Guru Meditation Error: ... panic'ed`) is the
 tell.
 
-### 6c. Crash decoding — ⬜ NOT YET DONE
+### 6c. Crash decoding — ✅ CONFIRMED
 
-Still the actual gap. Deliberately trigger a real fault (e.g. a null pointer
-dereference in a throwaway line) to see an actual "Guru Meditation Error" panic and a
-genuine multi-frame backtrace, distinct from the clean-restart trace above. `idf.py
-monitor` decodes backtraces via `addr2line` automatically if it can find the matching
-`.elf` in `build/`. This remains ⬜ deliberately — reading about the distinction above is
-not the same as having triggered and read a real one.
+Deliberately triggered a real fault: `int *bad_ptr = NULL; *bad_ptr = 42;` inserted into
+`app_main()`. Result, read and understood line by line:
+
+```
+Guru Meditation Error: Core 0 panic'ed (StoreProhibited). Exception was unhandled.
+...
+PC : 0x42006781 ... app_main at .../hello_world_main.c:46
+...
+EXCVADDR: 0x00000000
+...
+Backtrace: 0x4200677e:... 0x42005f0b:... 0x4200bc92:...
+--- 0x4200677e: app_main at hello_world_main.c:46
+--- 0x42005f0b: main_task at .../app_startup.c:206
+--- 0x4200bc92: vPortTaskWrapper at .../port.c:147
+```
+
+Key reading skills confirmed:
+- `StoreProhibited` = illegal **write** (vs `LoadProhibited` = illegal read)
+- `EXCVADDR` = the actual faulting address — `0x00000000` here confirmed this was
+  genuinely the planted null-deref, not something else
+- `PC` resolves directly to the source file/line of the fault when `idf.py monitor` has
+  the matching `.elf` — no manual `addr2line` needed in the common case
+- Backtrace reads bottom-to-top as a call stack: `vPortTaskWrapper` (FreeRTOS's generic
+  task entry trampoline) → `main_task` (ESP-IDF's wrapper that invokes `app_main`) →
+  `app_main` (the actual fault site). A deeper bug would show more frames.
+
+**The distinguishing pattern vs. a clean restart (§6b), now confirmed by direct
+comparison:** a real panic shows `Guru Meditation Error:` and a populated `EXCVADDR`
+before any reset-reason line; a clean restart shows only a reset-reason line
+(`RTC_SW_CPU_RST` etc.) resolving to an intentional function like `esp_restart_noos`,
+with no panic block and no `EXCVADDR` at all. This is the check to run first on any
+future unexpected reboot, before assuming anything else.
+
+Crash line removed from `hello_world_main.c` after this exercise — file is back to the
+stock example.
 
 ---
 
@@ -247,8 +276,48 @@ the quick-reference.
 ## 8. Environment fingerprint (for future debugging reference)
 
 - Machine: MacBook Air, macOS, Apple Silicon (arm64)
-- Native IDF: v5.3.1, cloned to `~/esp/esp-idf`
+- **Native IDF: v6.0.2**, at `~/.espressif/v6.0.2/esp-idf` (not `~/esp/esp-idf` — that
+  was an earlier v5.3.1 install, since removed; see §9 below for the full story)
 - Project path: `/Volumes/Projects/OMNIS`
-- Python: 3.11.0 (python.org installer), also 3.14 present but unused for IDF
-- Devcontainer IDF (separate, QEMU-only): v6.1-dev, target `esp32s3`, `qemu-system-xtensa`
-  present at `/opt/esp/tools/qemu-xtensa/esp_develop_9.2.2_20260417/qemu/bin/`
+- Python: three installs present — 3.11.0, 3.14.0, and system/homebrew variants.
+  `get_idf` alias explicitly forces `/Library/Frameworks/Python.framework/Versions/3.14/bin`
+  to the front of PATH before sourcing `export.sh` — required, not optional, because
+  plain `which python3` resolves 3.11 first on this machine and ESP-IDF v6.0.2's tooling
+  needs the 3.14 venv specifically. See §9 for why this matters.
+- Devcontainer IDF (separate, QEMU-only, untouched by any of this): v6.1-dev, target
+  `esp32s3`, `qemu-system-xtensa` present at
+  `/opt/esp/tools/qemu-xtensa/esp_develop_9.2.2_20260417/qemu/bin/`
+
+## 9. Post-mortem: the v5.3.1 → v6.0.2 migration (read before repeating this)
+
+What actually happened, briefly, because the specific failure modes are worth
+remembering even though the end state is simple:
+
+1. Discovered a **second, pre-existing IDF install** at `~/.espressif/v6.0.2/esp-idf`
+   (dated Aug 10, predating this project's setup — almost certainly placed there
+   silently by the VS Code Espressif extension at some point) was winning over the
+   native `~/esp/esp-idf` v5.3.1 install on PATH.
+2. Both installs share the same underlying tool cache (`~/.espressif/tools/`), and
+   running `install.sh` for one can overwrite tool versions the other depends on —
+   this produced `"tool X has no installed versions"` errors that looked like a broken
+   install but were actually a version collision between the two checkouts.
+3. Verified v6.0.2 as genuinely functional (clean `install.sh`, clean `export.sh`
+   activation, clean project build) **before** deleting v5.3.1 — the correct order,
+   confirmed working before removing the fallback.
+4. After switching the `get_idf` alias to point at v6.0.2 and deleting `~/esp/esp-idf`,
+   `export.sh` started failing in **every fresh terminal** with a missing-venv error —
+   traced to `export.sh` picking up `python3.11` (first on this machine's PATH) instead
+   of the `python3.14` that v6.0.2's tools were actually installed against. This is a
+   different failure from #2 — not a version collision, a Python-interpreter-selection
+   bug specific to how `export.sh` resolves `python3`.
+5. Fixed durably by making the `get_idf` alias itself prepend the correct Python 3.14
+   path before sourcing `export.sh`, rather than relying on the system default — see the
+   current alias definition in §4 above.
+
+**The lesson worth keeping, generalized:** a script that "just runs `python3`" is
+implicitly depending on whatever your system's default PATH ordering happens to
+resolve that to — which may silently differ from the interpreter that script's own
+dependencies were actually installed against. If a `command not found` or
+`venv not found`-style error reappears after a fix seemed to work, suspect the fix was
+session-scoped (see the diagnostic playbook's Class 4) rather than assuming the earlier
+fix failed to take effect at all.
