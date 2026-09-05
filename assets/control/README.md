@@ -1,0 +1,58 @@
+# OMNIS — Control & Estimation
+
+Sensor fusion, attitude EKF, and balance PID for the OMNIS platform. Companion
+to [`../kinematics/`](../kinematics/), which covers the mecanum drivetrain.
+
+Implements `omnis-info.md` §11 (EKF and dual-IMU fusion), §12 (calibration
+hooks) and §13 (balance control).
+
+## Layout
+
+| File | What it is |
+|---|---|
+| [`attitude-ekf-reference.md`](attitude-ekf-reference.md) | State model, matrices, tuning, verified numbers |
+| [`attitude-ekf-derivation.md`](attitude-ekf-derivation.md) | Why the filter has this form; the singularity; what was left out |
+| [`sensor-fusion-reference.md`](sensor-fusion-reference.md) | Mounting, fusion, the 15° fault, side detection |
+| [`pid-reference.md`](pid-reference.md) | Cascaded architecture, anti-windup, tuning procedure |
+| [`control-code-explained.md`](control-code-explained.md) | Integration example and line-by-line walkthrough |
+| `attitude_ekf.h/.c` | Per-IMU 4-state attitude filter |
+| `imu_fusion.h/.c` | Mounting remap, fusion, fault, side detection |
+| `pid.h/.c` | Inner PID + outer velocity-bias loop |
+| `test_control.c` | 67 host-side assertions |
+| `run_host_tests.sh` | Build and run them — no ESP-IDF, no hardware |
+
+## Verify
+
+```bash
+./run_host_tests.sh
+```
+
+## Three things that will bite
+
+1. **Correct the IMU mounting before the EKF, not after.** An un-corrected 180°
+   rotation makes two healthy sensors read 20° apart and the fault fires at
+   boot, every boot. → `sensor-fusion-reference.md` §2
+2. **Never compare Euler angles to detect IMU disagreement.** Balance mode sits
+   at pitch ≈ 90° where roll is gimbal-locked; a 60° roll difference there is
+   only 3.46° of real disagreement. Compare gravity vectors. → §3
+3. **The outer velocity-bias loop's sign.** Forward drive effort must command a
+   *backward* lean. Wrong sign accelerates until it falls over.
+   → `pid-reference.md` §4
+
+## Units
+
+Radians and rad/s throughout. Accelerometer in **g**, not m/s² — the adaptive-R
+gate keys off `|a|` deviating from 1.0, so m/s² silently rejects every update.
+Convert once at the driver boundary.
+
+Body frame matches the kinematics convention exactly: **+X forward, +Y left,
++Z up**.
+
+## Deliberately not here
+
+- Gyro/accel calibration routines (§12) — these modules *consume* calibration
+  via `attitude_ekf_set_gyro_bias()`; producing it is a driver concern.
+- Any I2C or peripheral access. Pure arithmetic, host-testable.
+- Numeric PID gains. §13d declines to guess them without mass, CG height and
+  wheel radius; `pid_config_defaults()` sets them to zero on purpose.
+- Lever-arm compensation. §11b defers it to v2; needs measured IMU positions.

@@ -1,0 +1,275 @@
+# Dual-IMU Sensor Fusion — Reference
+
+**Project:** OMNIS · two MPU6050s at diagonally opposite corners
+**Scope:** Mounting reconciliation, fusion, disagreement fault, side detection.
+**Implements:** `omnis-info.md` §11c
+
+---
+
+## 1. What this layer does
+
+Three jobs, deliberately kept separate because they fail differently:
+
+| Job | Function | Fails how |
+|---|---|---|
+| **Reconcile mounting** | `imu_apply_mount()` | silently, at boot, looks like a broken sensor |
+| **Fuse** | `imu_fusion_combine()` | gracefully — degrades to one IMU |
+| **Fault** | disagreement metric | must be loud; it gates the motors |
+| **Side detect** | `imu_detect_side()` | returns `UNKNOWN` rather than guessing |
+
+Order matters: **mounting must be corrected before the EKFs run**, not after.
+
+---
+
+## 2. Mounting reconciliation — read this first
+
+The two modules sit at opposite corners of a hand-routed board. There is no
+guarantee their packages point the same way; one is very often rotated 180°
+about Z relative to the other, because that is what makes the I2C run reach.
+
+If that rotation is not undone before the EKF sees the data, the two filters
+converge to attitudes differing by the mounting rotation, the disagreement
+metric reads large, and **the 15° fault fires at boot, every boot, on two
+perfectly healthy sensors.**
+
+Verified: an un-corrected 180° Z mounting on a chassis at 10° of roll reads as
+**20.0°** of disagreement — comfortably over the threshold.
+
+> This is the single most likely reason a correct dual-IMU implementation
+> refuses to arm. Check it before suspecting the filter.
+
+### Encoding
+
+Both modules lie flat on the same board, so every realistic mounting differs by
+a multiple of 90°. That is exactly a **signed axis permutation** — a swap and a
+sign flip. No trig, no rotation matrix, bit-exact, three loads instead of nine
+multiply-accumulates.
+
+```
+map[i] selects which sensor axis feeds body axis i, 1-based so sign is usable:
+  +1/-1 = sensor X    +2/-2 = sensor Y    +3/-3 = sensor Z
+
+  body_x = sign(map[0]) * sensor[ |map[0]| - 1 ]
+```
+
+Body frame matches the kinematics convention exactly
+(`mecanum-kinematics-reference.md` §1): **+X forward, +Y left, +Z up.**
+
+### Presets
+
+| Macro | `map` | Meaning |
+|---|---|---|
+| `IMU_MOUNT_IDENTITY` | `{+1,+2,+3}` | axes already match the body frame |
+| `IMU_MOUNT_ROT_Z_90` | `{+2,-1,+3}` | rotated 90° CCW seen from above |
+| `IMU_MOUNT_ROT_Z_180` | `{-1,-2,+3}` | **the common opposite-corner case** |
+| `IMU_MOUNT_ROT_Z_270` | `{-2,+1,+3}` | rotated 270° CCW |
+| `IMU_MOUNT_FLIP_X` | `{+1,-2,-3}` | mounted on the underside |
+| `IMU_MOUNT_FLIP_X_ROT_Z_180` | `{-1,+2,-3}` | underside *and* rotated |
+
+Apply to **both** the accelerometer and the gyro. Both are vectors in the sensor
+frame; a frame change does not care what they measure.
+
+### Two validity checks worth running once at boot
+
+- `imu_mount_is_valid()` — every entry in ±1..±3 and all three axes distinct.
+  A typo like `{+1,+1,+3}` collapses two body axes onto one sensor axis and
+  produces an attitude that looks plausible but is wrong in a way that is very
+  hard to see on a plot.
+- `imu_mount_is_right_handed()` — determinant +1. A mirrored map such as
+  `{+2,+1,+3}` is a valid permutation but inverts the sign of every rotation, so
+  the gyro and the accel-derived angle disagree permanently and the EKF fights
+  itself forever.
+
+### How to determine yours
+
+No measurement needed — a two-minute bench procedure:
+
+1. Lie the chassis flat, powered, stationary. Print raw accel from both IMUs.
+   Both should read `az ≈ +1 g`, `ax ≈ ay ≈ 0`. If one reads `az ≈ −1 g`, it is
+   mounted on the underside.
+2. Tip the chassis **nose-down** ~30°. Both should show `ax` going **negative**
+   by roughly the same amount. If one goes positive, its X is reversed.
+3. Tip **left-side-down** ~30°. Both should show `ay` going **positive**
+   (+Y is left). If one goes negative, its Y is reversed.
+4. If X and Y are *swapped* rather than reversed, it is a 90° or 270° case —
+   step 2 will move `ay` instead of `ax`.
+
+Pick the preset that makes both IMUs agree, then confirm: the disagreement
+metric should read **< 2°** with the chassis static and level.
+
+---
+
+## 3. The disagreement metric — gravity vectors, not Euler angles
+
+§11c calls for a fault when the two IMUs "disagree beyond ~15°". *What* to
+compare is where this gets subtle.
+
+**Do not compare Euler angles.** At pitch ≈ ±90° — which is exactly where
+balance mode lives — roll is gimbal-locked and undefined, so two healthy sensors
+can report wildly different roll values and both be right.
+
+**Compare gravity directions instead.** Reconstruct each IMU's estimate of
+"down" as a unit vector and take the angle between them:
+
+```
+u = ( -sin(pitch),  sin(roll)*cos(pitch),  cos(roll)*cos(pitch) )
+
+disagreement = acos( clamp( u_A · u_B , -1, +1 ) )
+```
+
+This is the exact inverse of the EKF measurement model, so it is consistent by
+construction, and it is singularity-free at every attitude.
+
+> The `clamp` is not cosmetic. Both are unit vectors so `|dot| ≤ 1`
+> mathematically, but float rounding produces `1.0000001`, `acosf` returns NaN,
+> and `NaN > threshold` evaluates **false** — silently disabling the IMU fault
+> check. A NaN that switches off a safety interlock is precisely the failure
+> this clamp exists to prevent.
+
+### Verified disagreement values
+
+| IMU A (roll, pitch) | IMU B (roll, pitch) | disagreement | verdict |
+|---|---|---|---|
+| 0°, 0° | 0°, 0° | 0.0000° | ok |
+| 0°, 0° | 10°, 0° | 10.0000° | ok |
+| 0°, 0° | 0°, 10° | 10.0000° | ok |
+| 0°, 0° | 15°, 0° | 15.0000° | at threshold |
+| 0°, 0° | 20°, 0° | 20.0000° | **FAULT** |
+| 0°, 0° | 10°, 10° | 14.1060° | ok |
+| 0°, 88° | 0°, 92° | 4.0000° | ok |
+| **30°, 88°** | **−30°, 92°** | **3.4639°** | **ok** |
+
+That last row is the whole argument. In balance mode a **60° roll difference is
+only 3.46° of real disagreement**, because roll means nothing there. A naive
+`|roll_A − roll_B|` test would fault continuously on a healthy robot.
+
+### Threshold
+
+```
+IMU_DISAGREE_THRESH_RAD = 0.2617993878   /* 15.0 deg, per §11c */
+```
+
+§11c is explicit that beyond this it is "a bad mount, sensor, or cable, not
+something to average through" — flag the fault and fail toward the link-loss
+failsafe (disable steppers) rather than balance on an untrustworthy number.
+
+---
+
+## 4. Inverse-covariance weighted fusion
+
+```
+x_fused = ( x_A/P_A + x_B/P_B ) / ( 1/P_A + 1/P_B )
+P_fused = 1 / ( 1/P_A + 1/P_B )
+```
+
+This is the maximum-likelihood combination of two independent Gaussian
+estimates: weight each by its confidence, and the result is more confident than
+either.
+
+### Verified
+
+| A | P_A | B | P_B | fused | P_fused | σ |
+|---|---|---|---|---|---|---|
+| 2.00° | 1e-4 | 3.00° | 1e-4 | 2.5000° | 5.000e-5 | 0.4051° |
+| 2.00° | 1e-4 | 3.00° | 4e-4 | 2.2000° | 8.000e-5 | 0.5125° |
+| 2.00° | 1e-4 | 10.00° | 1e-2 | 2.0792° | 9.901e-5 | 0.5701° |
+
+Row 1: equal confidence gives the midpoint. Row 2: B four times less certain,
+result pulled 80% toward A. Row 3: B nearly worthless, fused sits essentially on
+A — the useful behaviour when one IMU is being shaken and the other is not.
+
+### Honest caveat
+
+**The two IMUs are not independent.** They observe the same physical motion,
+share a chassis, and see a correlated vibration environment. Treating them as
+independent makes `P_fused` **optimistic** — the real uncertainty is larger.
+
+This is acceptable here only because `P_fused` is *not fed back into anything*:
+it is reported for diagnostics, and the fault check is a separate geometric
+test that does not use it. Do not start using `P_fused` as a calibrated
+uncertainty. If that is ever needed, covariance intersection gives a
+conservative bound instead.
+
+### Wrapped averaging
+
+Roll and pitch are angles. Averaging +179° and −179° naively gives 0°, which is
+180° wrong. The implementation averages *relative to A*:
+
+```
+fused = a + wrap_pi(b - a) * (w_b / (w_a + w_b))
+```
+
+### Degraded modes
+
+| Situation | Behaviour |
+|---|---|
+| One filter `NULL` | return the other, `fault = false` — nothing to disagree with |
+| Both `NULL` | zeroed estimate, `fault = true` |
+| A variance ≤ 0 | fall back to plain average — a corrupted covariance must not divide by zero |
+
+A single-IMU estimate beats no estimate; the caller's fault path decides whether
+to keep driving.
+
+---
+
+## 5. Side detection
+
+§11c needs "which side is down" for the active-wheel-pair remapping in §1.
+
+```
+imu_side_t imu_detect_side(ax, ay, az, gyro_mag)
+```
+
+### Rest gate — both conditions required
+
+| Gate | Value | Why |
+|---|---|---|
+| `\|gyro\| <` | 3 °/s | rotating platform has no static gravity reference |
+| `\| \|a\| − 1g \| <` | 0.10 g | accelerating platform likewise |
+
+Steady free-fall has low gyro but no usable gravity vector; a constant-rate
+rotation can hold `|a|` near 1 g while pointing nowhere useful. Both gates are
+load-bearing.
+
+### Dominance requirement
+
+The largest-magnitude axis wins, but only if it exceeds **0.80 g** — within ~37°
+of an axis. On a 45° corner two axes read ~0.71 g each and there is no correct
+answer; returning `UNKNOWN` beats picking one and having the balance controller
+drive the wrong wheel pair.
+
+### Verified
+
+| Input | Result |
+|---|---|
+| flat, at rest | `Z_UP` |
+| inverted, at rest | `Z_DOWN` |
+| nose-up balance pose (`ax = −1 g`) | `X_DOWN` |
+| flat but spinning at 1 rad/s | `UNKNOWN` |
+| flat but `\|a\| = 1.5 g` | `UNKNOWN` |
+| 45° corner | `UNKNOWN` |
+
+### Call it rarely
+
+§11c: evaluate **only at mode-entry or after a detected flip, never
+continuously** — a live side-detector fights the balance controller mid-balance.
+The rest gate enforces this defensively (a caller that ignores the advice still
+cannot get a bad answer while manoeuvring), but the gate is a backstop, not a
+licence to poll it every tick.
+
+---
+
+## 6. Call order
+
+```
+per IMU, every tick:
+    raw accel, gyro  (I2C — superloop only, never an ISR)
+        |
+    imu_apply_mount()          <-- BEFORE the EKF. non-negotiable.
+        |
+    attitude_ekf_step()
+        |
+    +---> imu_fusion_combine()  -> fused angle + fault
+```
+
+Side detection sits outside this path, called at mode entry only.
