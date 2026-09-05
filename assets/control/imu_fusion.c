@@ -249,3 +249,87 @@ bool imu_mount_is_right_handed(const imu_mount_t *m)
 
     return (det > 0.5f);           /* det is exactly +1 or -1 */
 }
+
+/* ------------------------------------------------------------------------
+ * Resolve a mounting descriptor from two known poses.
+ *
+ * Pose 1 (level):     accelerometer reads the UP direction, so the sensor axis
+ *                     reading ~ +1 g IS body +Z, sign included. Unambiguous, and
+ *                     it needs no knowledge of the tilt angle.
+ *
+ * Pose 2 (nose-down): body +X has rotated below horizontal, so it now reads
+ *                     -sin(tilt) — NEGATIVE. Of the two axes that are not Z,
+ *                     the one that moved away from zero is X; the other is still
+ *                     ~0 and must be Y.
+ *
+ * Body +Y is then forced by right-handedness rather than measured: with X and Z
+ * fixed there is exactly one choice of Y sign giving determinant +1, and
+ * deriving it beats asking the user for a third pose.
+ * ------------------------------------------------------------------------ */
+bool imu_mount_resolve(const float level_sample[3],
+                       const float nose_down_sample[3],
+                       imu_mount_t *out)
+{
+    if (level_sample == NULL || nose_down_sample == NULL || out == NULL) {
+        return false;
+    }
+
+    /* --- Pose 1: which sensor axis is body +Z? --------------------------- */
+    int   z_idx  = -1;
+    float z_best = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        const float m = fabsf(level_sample[i]);
+        if (m > z_best) { z_best = m; z_idx = i; }
+    }
+    /* Demand a genuinely level pose. Below 0.8 g on the dominant axis the
+     * chassis was tilted more than ~37 deg, and "level" was not level. */
+    if (z_idx < 0 || z_best < 0.80f) {
+        return false;
+    }
+    const int z_sign = (level_sample[z_idx] >= 0.0f) ? +1 : -1;
+
+    /* --- Pose 2: of the remaining two axes, which one moved? ------------- */
+    int   x_idx  = -1;
+    float x_best = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        if (i == z_idx) {
+            continue;
+        }
+        const float m = fabsf(nose_down_sample[i]);
+        if (m > x_best) { x_best = m; x_idx = i; }
+    }
+    /* Demand a real tilt. 0.20 g is about 12 deg; below that the X and Y axes
+     * are not separated and the answer would be noise. */
+    if (x_idx < 0 || x_best < 0.20f) {
+        return false;
+    }
+
+    /* Body +X must read NEGATIVE in this pose (-sin(tilt)), so the sign that
+     * maps this sensor axis onto body +X is the opposite of what it reads. */
+    const int x_sign = (nose_down_sample[x_idx] >= 0.0f) ? -1 : +1;
+
+    /* --- The leftover axis is body Y ------------------------------------- */
+    int y_idx = 3 - z_idx - x_idx;      /* the index that is neither 0+1+2 sum trick */
+    if (y_idx < 0 || y_idx > 2 || y_idx == z_idx || y_idx == x_idx) {
+        return false;                   /* cannot happen; cheap guard */
+    }
+
+    /* --- Force right-handedness rather than measuring it ----------------- */
+    imu_mount_t m;
+    m.map[0] = (signed char)(x_sign * (x_idx + 1));
+    m.map[2] = (signed char)(z_sign * (z_idx + 1));
+
+    m.map[1] = (signed char)(+(y_idx + 1));
+    if (!imu_mount_is_right_handed(&m)) {
+        m.map[1] = (signed char)(-(y_idx + 1));
+    }
+
+    /* If neither Y sign yields a right-handed frame, the inputs were
+     * inconsistent and emitting a mirrored map would be worse than failing. */
+    if (!imu_mount_is_valid(&m) || !imu_mount_is_right_handed(&m)) {
+        return false;
+    }
+
+    *out = m;
+    return true;
+}

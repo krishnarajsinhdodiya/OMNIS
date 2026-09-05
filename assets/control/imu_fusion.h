@@ -115,6 +115,45 @@ typedef struct {
 void imu_apply_mount(const imu_mount_t *m, const float in[3], float out[3]);
 
 /**
+ * @brief Derive a mounting descriptor from two known poses. Removes the guess.
+ *
+ * The alternative to this function is reading a silkscreen arrow and hoping it
+ * means what you think it means. A wrong GLOBAL orientation — both IMUs
+ * consistently rotated — does NOT trip the disagreement fault, because the two
+ * still agree with each other perfectly. It silently swaps which body axis is
+ * the lean axis, and the balance controller then drives the wrong one. Nothing
+ * downstream can catch that, so it is worth two minutes at the bench.
+ *
+ * PROCEDURE, per IMU:
+ *   1. Chassis flat and level, stationary. Average a few hundred accel samples.
+ *      -> level_sample
+ *   2. Chassis tipped NOSE-DOWN (front edge lowered) by anything from ~15 to
+ *      ~75 degrees, held still. Average again.
+ *      -> nose_down_sample
+ *   3. Call this. Use the returned descriptor.
+ *
+ * WHY TWO POSES AND NOT ONE: a single tilted sample is genuinely ambiguous. A
+ * reading of (0.5, 0, 0.866) is consistent BOTH with "body X is sensor X, tilt
+ * 30 deg" AND with "body X is sensor Z, tilt 60 deg" — both give the correct
+ * sign pattern and both are right-handed. Only the level pose pins body +Z
+ * independently, after which the nose-down pose pins body +X unambiguously.
+ *
+ * SIGN NOTE: with the atan2 measurement model in attitude_ekf.c, nose-down is
+ * POSITIVE pitch (the opposite of the aerospace convention). Verified: a 30 deg
+ * nose-down attitude reads accel (-0.5, 0, +0.866) and pitch +30 deg.
+ *
+ * @param level_sample      accel [g] with the chassis flat and level
+ * @param nose_down_sample  accel [g] with the front edge lowered
+ * @param out               resolved descriptor, written only on success
+ * @return true on success; false if a pose was too ambiguous to read, in which
+ *         case `out` is untouched. Failure means the level pose was not level,
+ *         or the nose-down tilt was too small (< ~12 deg) to separate the axes.
+ */
+bool imu_mount_resolve(const float level_sample[3],
+                       const float nose_down_sample[3],
+                       imu_mount_t *out);
+
+/**
  * @brief Sanity-check a mounting descriptor.
  *
  * Valid means: every entry is +-1..+-3, and all three reference distinct axes.

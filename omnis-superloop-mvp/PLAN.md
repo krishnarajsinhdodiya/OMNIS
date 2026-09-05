@@ -217,10 +217,11 @@ Mac, before any of it runs on hardware.
 ### Stage 3 — MPU6050 driver + attitude EKF
 
 > **Largely pre-built.** `assets/control/` now contains the EKF, dual-IMU
-> fusion, fault check and mounting layer, host-tested with 67 assertions
-> (`./run_host_tests.sh`). This stage becomes: port those four files in
-> unchanged, write the MPU6050 I2C driver beneath them, and wire the boot-time
-> gyro calibration. The filter maths is done and verified.
+> fusion, fault check and mounting layer, host-tested with 76 assertions
+> (`./run_host_tests.sh`). This stage becomes: port those files in unchanged,
+> write the MPU6050 I2C driver beneath them, wire the boot-time gyro
+> calibration, and run `imu_mount_resolve()` once per IMU to confirm the mount
+> constants. The filter maths is done and verified.
 
 - `mpu6050.c` — register-level driver on the new `i2c_master` API (not the
   deprecated `i2c.h`). Both devices on the shared bus, 0x68 and 0x69, Fast-mode
@@ -367,11 +368,11 @@ counter stays at zero over a multi-minute run.
 | 5 | Kill switch on CRSF channel 6, 2-position (§7d read "skill" as "kill") | Stage 4 | ch 6, high = killed |
 | 6 | `VX_MAX_MMPS` etc. — proposed from Case D's ceiling, unverified on hardware | Stage 2 | 300 / 150 / 300 / 1.5 |
 | ~~7~~ | ~~Which wheel pair is grounded in balance mode~~ — **RESOLVED**: front is the OLED end, a short edge, so the chassis tips about body **Y**. Lean angle is **pitch**; the grounded pair is FL+FR or RL+RR. `omnis_balance_pair_from_pitch()` in `omnis_imu_mounting.h`. | — | — |
-| 8 | IMU mount arrows taken as sensor **+X**. If they mark +Y, the constants become `ROT_Z_90`/`ROT_Z_270` | Stage 3 | one bench sign-check confirms |
+| ~~8~~ | ~~IMU mount arrow interpretation~~ — **RESOLVED**: no longer an assumption. `imu_mount_resolve()` derives the descriptor from two poses (level, then nose-down) with no interpretation, verified against all 24 right-handed mountings. Run once per IMU at Stage 3 bring-up. | — | — |
 
-Nothing here blocks Stage 1 except question 1. Questions 4 and 7 were
-resolved by the board photo and the confirmed front edge; question 8 is a
-two-minute bench check, not a blocker.
+Only question 1 remains open, and it blocks nothing before Stage 1. Questions 4
+and 7 were resolved by the board photo and the confirmed front edge; question 8
+was closed by deriving the mounting in firmware instead of assuming it.
 
 ---
 

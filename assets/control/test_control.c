@@ -346,6 +346,98 @@ static void case11_velocity_bias(void)
     chk("zero drive, trim only      [deg]", DEG(tgt), 1.5000, 1e-4);
 }
 
+
+/* --------------------------------------------------------------- Case 12 */
+/* Synthesise what a sensor would read under a KNOWN mounting, then check the
+ * resolver recovers that mounting. Exhaustive over all 24 right-handed signed
+ * permutations — if it works for every physically possible mounting, it works. */
+static void to_sensor(const imu_mount_t *m, const float body[3], float sensor[3])
+{
+    /* body[i] = sign(code) * sensor[|code|-1]   =>   sensor[|code|-1] = sign*body[i] */
+    for (int i = 0; i < 3; ++i) {
+        const int code = m->map[i];
+        const int idx  = (code < 0 ? -code : code) - 1;
+        sensor[idx] = (code < 0) ? -body[i] : body[i];
+    }
+}
+
+static void case12_mount_resolver(void)
+{
+    puts("\nCase 12 - mount resolver, exhaustive over all right-handed mountings");
+
+    /* Body-frame truth for the two calibration poses. */
+    const float level[3]     = { 0.0f, 0.0f, 1.0f };            /* flat        */
+    const float tilt         = RAD(35.0f);                       /* nose down   */
+    const float nose_down[3] = { -sinf(tilt), 0.0f, cosf(tilt) };
+
+    int tested = 0, recovered = 0;
+
+    for (int sx = -1; sx <= 1; sx += 2)
+    for (int sy = -1; sy <= 1; sy += 2)
+    for (int sz = -1; sz <= 1; sz += 2)
+    for (int px = 1; px <= 3; ++px)
+    for (int py = 1; py <= 3; ++py)
+    for (int pz = 1; pz <= 3; ++pz) {
+        if (px == py || py == pz || px == pz) continue;
+
+        imu_mount_t truth;
+        truth.map[0] = (signed char)(sx * px);
+        truth.map[1] = (signed char)(sy * py);
+        truth.map[2] = (signed char)(sz * pz);
+        if (!imu_mount_is_right_handed(&truth)) continue;
+
+        ++tested;
+
+        float s_level[3], s_nose[3];
+        to_sensor(&truth, level,     s_level);
+        to_sensor(&truth, nose_down, s_nose);
+
+        imu_mount_t got;
+        if (!imu_mount_resolve(s_level, s_nose, &got)) continue;
+
+        if (got.map[0] == truth.map[0] &&
+            got.map[1] == truth.map[1] &&
+            got.map[2] == truth.map[2]) {
+            ++recovered;
+        }
+    }
+
+    printf("  tested %d right-handed mountings, recovered %d\n", tested, recovered);
+    chk_true("all 24 right-handed mountings enumerated", tested == 24);
+    chk_true("every one recovered exactly", recovered == tested);
+
+    /* The two mountings that actually matter on this board. */
+    const imu_mount_t want_a = IMU_MOUNT_IDENTITY;
+    const imu_mount_t want_b = IMU_MOUNT_ROT_Z_180;
+    float sl[3], sn[3];
+    imu_mount_t got;
+
+    to_sensor(&want_a, level, sl); to_sensor(&want_a, nose_down, sn);
+    chk_true("IMU A (identity) resolves", imu_mount_resolve(sl, sn, &got)
+             && got.map[0]==want_a.map[0] && got.map[1]==want_a.map[1] && got.map[2]==want_a.map[2]);
+
+    to_sensor(&want_b, level, sl); to_sensor(&want_b, nose_down, sn);
+    chk_true("IMU B (rot Z 180) resolves", imu_mount_resolve(sl, sn, &got)
+             && got.map[0]==want_b.map[0] && got.map[1]==want_b.map[1] && got.map[2]==want_b.map[2]);
+
+    /* Failure modes must fail, not guess. */
+    const float not_level[3] = { 0.60f, 0.0f, 0.60f };   /* 45 deg, not level  */
+    chk_true("non-level 'level' pose rejected",
+             !imu_mount_resolve(not_level, sn, &got));
+
+    const float barely[3] = { -0.05f, 0.0f, 0.999f };    /* ~3 deg of tilt     */
+    chk_true("insufficient tilt rejected",
+             !imu_mount_resolve(level, barely, &got));
+
+    chk_true("NULL args rejected", !imu_mount_resolve(NULL, sn, &got));
+
+    /* Sign convention: nose-down must read POSITIVE pitch. Counter-intuitive
+     * against the aerospace convention, so assert it before someone "fixes" it. */
+    const float p = DEG(atan2f(-nose_down[0], hypotf(nose_down[1], nose_down[2])));
+    chk("nose-down 35 deg reads pitch    [deg]", p, 35.0, 1e-3);
+    chk_true("  ... POSITIVE pitch = nose DOWN", p > 0.0f);
+}
+
 int main(void)
 {
     puts("OMNIS control-stack verification");
@@ -362,6 +454,7 @@ int main(void)
     case9_pid();
     case10_antiwindup();
     case11_velocity_bias();
+    case12_mount_resolver();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return (g_fail == 0) ? 0 : 1;

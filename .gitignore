@@ -78,3 +78,6 @@ Desktop.ini
 *.sln.docstates # Visual Studio
 .vscode/settings.json
 sdkconfig.ci
+
+# clangd / IDE index cache
+.cache/

@@ -19,7 +19,7 @@ hooks) and §13 (balance control).
 | `imu_fusion.h/.c` | Mounting remap, fusion, fault, side detection |
 | `pid.h/.c` | Inner PID + outer velocity-bias loop |
 | `omnis_imu_mounting.h` | **As-built** chassis frame, corner labelling and IMU mount constants |
-| `test_control.c` | 67 host-side assertions |
+| `test_control.c` | 76 host-side assertions |
 | `run_host_tests.sh` | Build and run them — no ESP-IDF, no hardware |
 
 ## As-built chassis facts
@@ -35,6 +35,9 @@ Front edge is the OLED / button end. Body frame is right-handed, **+X forward,
 Balance mode tips about the body **Y** axis, so the lean angle is **pitch** and
 roll is gimbal-locked and unused. The grounded pair is FL+FR or RL+RR.
 
+**Positive pitch = nose DOWN**, opposite to the aerospace convention. It falls
+out of `pitch = atan2(−ax, hypot(ay,az))` and is asserted in the tests.
+
 See [`omnis_imu_mounting.h`](omnis_imu_mounting.h) for the chassis diagram.
 
 ## Verify
@@ -48,8 +51,9 @@ See [`omnis_imu_mounting.h`](omnis_imu_mounting.h) for the chassis diagram.
 1. **Correct the IMU mounting before the EKF, not after.** OMNIS's two modules
    *are* mounted antiparallel (confirmed 2026-09-05) — uncorrected, that makes
    two healthy sensors read 20° apart and the fault fires at boot, every boot.
-   The as-built constants are in `omnis_imu_mounting.h`.
-   → `sensor-fusion-reference.md` §2
+   Constants in `omnis_imu_mounting.h`; derive them for real with
+   `imu_mount_resolve()` rather than trusting a silkscreen arrow.
+   → `sensor-fusion-reference.md` §2, §2.5
 2. **Never compare Euler angles to detect IMU disagreement.** Balance mode sits
    at pitch ≈ 90° where roll is gimbal-locked; a 60° roll difference there is
    only 3.46° of real disagreement. Compare gravity vectors. → §3

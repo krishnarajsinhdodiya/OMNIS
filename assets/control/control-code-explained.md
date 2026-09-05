@@ -12,10 +12,10 @@ see [`attitude-ekf-derivation.md`](attitude-ekf-derivation.md).
 | File | Lines | Job |
 |---|---|---|
 | `attitude_ekf.h/.c` | ~470 | per-IMU 4-state attitude filter (§11b) |
-| `imu_fusion.h/.c` | ~460 | mounting, fusion, fault, side detection (§11c) |
+| `imu_fusion.h/.c` | ~560 | mounting + resolver, fusion, fault, side detection (§11c) |
 | `pid.h/.c` | ~330 | inner PID + outer velocity-bias loop (§13b) |
 | `omnis_imu_mounting.h` | ~120 | as-built chassis frame and mount constants (header-only) |
-| `test_control.c` | ~370 | 67 host-side assertions against verified values |
+| `test_control.c` | ~470 | 76 host-side assertions against verified values |
 | `run_host_tests.sh` | — | `cc` + run. No ESP-IDF, no hardware. |
 
 **Shared properties, by design:**
@@ -174,6 +174,20 @@ produces `1.0000001`, `acosf` returns **NaN**, and `NaN > threshold` evaluates
 **false** — silently disabling the IMU fault check. A NaN that switches off a
 safety interlock is exactly what this clamp prevents.
 
+### `imu_mount_resolve()` — derive the mounting, do not read an arrow
+
+Two poses (level, then nose-down) recover the descriptor with no interpretation.
+The level pose pins body **+Z** independently of any tilt angle; only then is the
+nose-down pose unambiguous for body **+X**; body **+Y** is then *forced* by
+right-handedness rather than measured.
+
+One pose is not enough, and the reason is worth knowing: a sensor reading of
+`(0.5, 0, 0.866)` fits "body X is sensor X at 30° tilt" *and* "body X is sensor Z
+at 60° tilt" equally well — same sign pattern, both right-handed.
+
+It returns `false` rather than guessing when a pose is unusable. Verified against
+all 24 right-handed mountings (Case 12).
+
 ### `imu_apply_mount()` — permutation, not matrix
 
 Both modules lie flat on the same board, so every realistic mounting differs by
@@ -257,11 +271,12 @@ it is the most common bug in this loop.
 ./run_host_tests.sh
 ```
 
-Compiles with `-Wall -Wextra -Werror` and runs 67 assertions covering: adaptive-R
+Compiles with `-Wall -Wextra -Werror` and runs 76 assertions covering: adaptive-R
 inflation, steady-state covariance and gain, gyro-bias recovery, step response,
 inverse-covariance fusion, the disagreement metric (including the balance-mode
 gimbal-lock case), mounting remap and validation, side detection with the rest
-gate, PID arithmetic, anti-windup under real saturation, and the outer loop.
+gate, PID arithmetic, anti-windup under real saturation, the outer loop, and an
+exhaustive sweep of the mount resolver over all 24 right-handed mountings.
 
 Every expected value was computed independently in Python first. If a refactor
 breaks one, the number in the reference doc is the authority.

@@ -74,6 +74,18 @@ extern "C" {
 #define OMNIS_IMU_A_MOUNT   IMU_MOUNT_IDENTITY
 #define OMNIS_IMU_B_MOUNT   IMU_MOUNT_ROT_Z_180
 
+/* These two read the marked arrow on each module as its sensor +X axis. That
+ * reading is an interpretation, and a wrong GLOBAL orientation is invisible to
+ * every check downstream — the two IMUs still agree with each other, so the
+ * disagreement fault stays silent while the balance controller drives the wrong
+ * body axis.
+ *
+ * Do not trust these constants on faith. imu_mount_resolve() derives the
+ * descriptor from two poses (level, then nose-down) with no interpretation at
+ * all; run it once per IMU on the bench and replace these if it disagrees. It
+ * is verified against all 24 right-handed mountings. See
+ * sensor-fusion-reference.md §2.5. */
+
 /* --- Balance mode --------------------------------------------------------
  * Front is a short edge, so tipping up onto two wheels rotates the chassis
  * about the body Y (left-right) axis. The lean angle is therefore PITCH, and
@@ -89,6 +101,16 @@ typedef enum {
 
 /**
  * @brief Which wheel pair is grounded, from the fused pitch estimate.
+ *
+ * SIGN, because this looks backwards and someone will "fix" it: with the atan2
+ * measurement model, pitch = atan2(-ax, hypot(ay, az)), so
+ *
+ *      POSITIVE pitch  ==  nose DOWN
+ *
+ * which is the OPPOSITE of the aerospace convention. Verified: a 30 deg
+ * nose-down attitude reads accel (-0.500, 0, +0.866) and pitch +30.0 deg; fully
+ * tipped forward onto the front wheels reads +90 deg. Hence pitch >= 0 maps to
+ * the FRONT pair being grounded. Asserted in test_control.c Case 12.
  *
  * Deliberately trivial and deliberately NOT called every tick — omnis-info.md
  * §11c is explicit that a live side-detector fights the balance controller

@@ -100,17 +100,65 @@ the chassis diagram and the corner labelling that follows from the front edge
 (FL = front-left, matching the `δ = -1` roller pair in
 `mecanum-kinematics-reference.md` §4).
 
-> **Assumption worth one bench check.** This takes the marked arrow on each
-> module to be its sensor **+X** axis. If the arrow marks +Y instead, the
-> constants become `ROT_Z_90` / `ROT_Z_270` — still a one-line change, and step
-> 2 of the procedure below catches it in under a minute. Run it once before
-> trusting the balance loop.
+These constants read the marked arrow on each module as its sensor **+X** axis.
+**Do not rely on that reading — derive it.** `imu_mount_resolve()` recovers the
+descriptor from two poses with no interpretation required; see §2.5 below.
 
 A wrong *global* orientation (both IMUs consistently rotated) does **not** trip
-the fault, because the two still agree with each other. It silently inverts the
-fore-aft sense of the fused pitch, and the balance controller then pushes the
-wrong way. The fault check cannot catch this class of error; only the sign check
-below can.
+the fault, because the two still agree with each other perfectly. It silently
+changes which body axis is the lean axis, and the balance controller then drives
+the wrong one. **Nothing downstream can catch this class of error** — not the
+disagreement fault, not the EKF, not the PID. Deriving the mounting is the only
+defence, and it costs two minutes.
+
+### 2.5 Deriving the mounting — `imu_mount_resolve()`
+
+Two poses, per IMU, no arrow-reading and no raw-number interpretation:
+
+| Step | Pose | What it pins down |
+|---|---|---|
+| 1 | Chassis **flat and level**, stationary. Average a few hundred accel samples. | body **+Z** — the accelerometer reads the *up* direction, so the axis reading ≈ +1 g is body +Z, sign included |
+| 2 | Chassis tipped **nose-down** (front edge lowered) 15–75°, held still. Average again. | body **+X** — of the two axes that are not Z, the one that moved away from zero is X, and it must read *negative* |
+| 3 | — | body **+Y** is *forced* by right-handedness, not measured. With X and Z fixed there is exactly one Y sign giving determinant +1 |
+
+```c
+imu_mount_t mount;
+if (imu_mount_resolve(level_sample, nose_down_sample, &mount)) {
+    /* authoritative — use this over any assumed constant */
+}
+```
+
+**Why two poses and not one.** A single tilted sample is genuinely ambiguous. A
+sensor reading of `(0.5, 0, 0.866)` is consistent *both* with "body X is sensor
+X at 30° of tilt" *and* with "body X is sensor Z at 60° of tilt" — both produce
+the correct sign pattern and both are right-handed. The level pose pins body +Z
+independently of any tilt angle, and only then does the nose-down pose become
+unambiguous.
+
+**It fails rather than guesses.** Returns `false` and leaves the output untouched
+if the "level" pose was tilted more than ~37° (so it was not level) or the
+nose-down tilt was under ~12° (so X and Y are not separated). A wrong answer here
+is much worse than no answer.
+
+**Verified exhaustively:** all **24** right-handed signed-permutation mountings
+synthesised and recovered exactly, plus every rejection case. Case 12 in
+`test_control.c`.
+
+### Pitch sign — counter-intuitive, so it is asserted
+
+With the `atan2` measurement model in `attitude_ekf.c`:
+
+| Attitude | accel (body) | pitch |
+|---|---|---|
+| level | `(0, 0, +1.000)` | `+0.0°` |
+| nose down 30° | `(−0.500, 0, +0.866)` | **`+30.0°`** |
+| nose down 60° | `(−0.866, 0, +0.500)` | **`+60.0°`** |
+| nose down 90° | `(−1.000, 0, +0.000)` | **`+90.0°`** |
+
+**Positive pitch means nose DOWN** — the opposite of the aerospace convention.
+This is a property of `pitch = atan2(−ax, hypot(ay, az))`, not a bug, and it is
+why `omnis_balance_pair_from_pitch()` maps `pitch ≥ 0` to the *front* pair being
+grounded. Someone will eventually try to "fix" this sign; the test asserts it.
 
 ### How to determine yours
 

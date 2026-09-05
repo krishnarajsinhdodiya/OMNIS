@@ -445,6 +445,10 @@ Target 500Hz for the EKF/balance loop — a well-established range for small, ag
 
 Populates the `imu_calibration` block already scaffolded in `params.json` (§9f).
 
+0. **IMU mounting orientation** (do this first — everything else assumes it). The two modules are mounted antiparallel (§2), and a wrong *global* orientation is invisible to every downstream check: the two IMUs still agree with each other, so §11c's disagreement fault stays silent while the balance controller drives the wrong body axis. Derive it rather than reading a silkscreen arrow — `imu_mount_resolve()` in `assets/control/` recovers the descriptor from two poses: chassis flat and level (pins body +Z), then tipped nose-down 15–75° (pins body +X); body +Y follows from right-handedness. One pose is not enough — a reading of `(0.5, 0, 0.866)` fits both "body X is sensor X at 30° tilt" and "body X is sensor Z at 60° tilt". Verified against all 24 right-handed mountings. Store per IMU alongside the calibration below.
+
+   **Sign note:** with §11b's `pitch = atan2(-ax, hypot(ay,az))`, **positive pitch means nose DOWN** — the opposite of the aerospace convention. Verified: 30° nose-down reads accel `(-0.500, 0, +0.866)`, pitch `+30.0°`.
+
 1. **Gyro bias**: with the robot stationary and level, sample each MPU6050's gyro for ~5 seconds at the target loop rate (§11d), average, store as `gyro_offset`. Worth redoing at every boot rather than trusting a stored value long-term — gyro bias drifts with temperature, and the robot has to sit still for the EKF to initialize anyway (§11c), so it costs nothing.
 2. **Accelerometer offset and scale**: six-position test — lay the robot on each of its six faces in turn, recording each axis's rest reading in each orientation. Each axis should read ±1g in two positions and ≈0g in the other four; the deviation from that ideal gives bias (average of the +1g/−1g readings) and scale error (half their difference) per axis.
 3. **Store both IMUs' results independently** in `mpu_0x68` / `mpu_0x69` — different physical chips, no reason to assume matching bias.
