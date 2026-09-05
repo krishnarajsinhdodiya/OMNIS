@@ -1,0 +1,57 @@
+# OMNIS Superloop MVP — build configuration
+#
+# Every line here exists for a reason recorded in PLAN.md or BUILD-LOG.md.
+# Regenerate sdkconfig by deleting it and rebuilding; do not hand-edit sdkconfig.
+
+# --- Target and flash ------------------------------------------------------
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+
+# --- The superloop and the watchdog ----------------------------------------
+# THIS IS THE LOAD-BEARING PART OF THIS FILE.
+#
+# app_main runs a while(1) that never calls vTaskDelay and therefore never
+# yields. On a stock config that starves the idle task on its core and the task
+# watchdog trips within seconds. Two settings make the superloop legal:
+#
+#   1. Pin app_main to CPU1, leaving CPU0 for the system's own housekeeping
+#      (timer service, esp_event, the console). Nothing of ours runs on CPU0.
+#   2. Stop watchdogging CPU1's idle task, since by design it will never run.
+#
+# The interrupt watchdog is deliberately LEFT ENABLED — it catches an ISR that
+# hangs, which is a real bug we want to hear about.
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=y
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# Main task stack: the superloop holds two EKFs and assorted state as locals in
+# later stages. 8 KB is generous and this build has RAM to spare.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# --- Timing ----------------------------------------------------------------
+# Keep the GPTimer control path and ISR handler in IRAM so tick jitter does not
+# depend on flash cache state. The 500 Hz tick is the spine of the whole build.
+CONFIG_GPTIMER_ISR_HANDLER_IN_IRAM=y
+CONFIG_GPTIMER_CTRL_FUNC_IN_IRAM=y
+
+# --- Performance -----------------------------------------------------------
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# --- Console ---------------------------------------------------------------
+# The baud rate is only settable when ESP_CONSOLE_UART_CUSTOM is set; without
+# it the int config is not prompted and any value here is silently ignored.
+# (Checked: the first attempt at this left it at 115200.)
+#
+# 460800 rather than 921600 because esptool already flashes this board at
+# 460800, which is evidence the USB-UART bridge handles that rate. At 115200 a
+# ~130-character log line occupies ~11 ms — five whole ticks. At 460800 it is
+# ~2.8 ms. The once-per-second report goes away in later stages anyway, but a
+# console that cannot stall the loop for 11 ms is worth having while bringing
+# up a control loop.
+#
+# If the monitor shows garbage, drop this to 115200 — nothing depends on it.
+CONFIG_ESP_CONSOLE_UART_CUSTOM=y
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=460800
