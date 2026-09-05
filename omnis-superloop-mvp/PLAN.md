@@ -1,6 +1,7 @@
 # OMNIS Superloop MVP — Build Plan
 
-**Status:** awaiting approval. No code written yet.
+**Status:** decisions 1b and 1c settled 2026-09-05; 1a pending one confirmation.
+No code written yet.
 **Created:** 2026-09-05
 **Target:** ESP32-S3-WROOM-1-N16R8 on EdgeHax S3 Pro, ESP-IDF v6.0.2 (native macOS install at `/Users/krishnaraj/.espressif/v6.0.2/esp-idf`)
 
@@ -96,7 +97,12 @@ Two ways to make a variable-rate pulse train:
   updates land naturally on tick boundaries, no disable/enable, and it gives an
   obvious place to apply the acceleration limit §13c asks for.
 
-I recommend **B**. Say if you want A.
+**DECIDED: Option B.** (2026-09-05)
+
+Note this rules out the Arduino core for step generation — see §1a. Arduino's
+RMT wrapper has no transaction queue; its own header states that a second
+`rmtWriteAsync()` issued while a transfer is in flight *fails*. Only
+`rmtWriteLooping()` (Option A) is reachable there.
 
 *Flagging once, then building what you asked for:* LEDC would do variable-rate
 step pulses in about a tenth of the code — set a frequency on four channels and
@@ -114,7 +120,9 @@ separable pieces:
 2. Inner 500 Hz lean-angle PID driving the two grounded wheels — *probably* in scope
 3. Outer ~20 Hz velocity-bias loop (§13b) + "which side is down" detection (§11c)
 
-**Recommendation:** build 1 and 2. Leave 3 out of the MVP — the outer loop is
+**DECIDED (2026-09-05): build 1 and 2, leave 3 out.** Rationale as below.
+
+Build 1 and 2. Leave 3 out of the MVP — the outer loop is
 the piece that most needs empirical tuning on real hardware, and side-detection
 adds a mode state machine this build doesn't otherwise need. Fixed assumption:
 the FL/FR pair is the grounded pair in balance mode, named as one constant so
@@ -158,6 +166,12 @@ omnis-superloop-mvp/
 ## 3. Stages
 
 One stage per step. **After each, I stop and wait for explicit approval.**
+
+**Every stage ends with test instructions posted in chat** (requested
+2026-09-05): exactly what to flash, what to connect, what to do physically, what
+you should observe if it works, and what the common failure looks like. Written
+for the bench, not as a doc to go read. Each stage's "Done when" line below is
+the pass criterion those instructions target.
 
 ### Stage 1 — Skeleton, pin map, params, 500 Hz tick
 
