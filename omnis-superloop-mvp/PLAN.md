@@ -1,7 +1,7 @@
 # OMNIS Superloop MVP — Build Plan
 
-**Status:** decisions 1b and 1c settled 2026-09-05; 1a pending one confirmation.
-No code written yet.
+**Status:** PLAN APPROVED 2026-09-05. All of §1 settled. Implementation begins
+at Stage 1; no code written as of this revision.
 **Created:** 2026-09-05
 **Target:** ESP32-S3-WROOM-1-N16R8 on EdgeHax S3 Pro, ESP-IDF v6.0.2 (native macOS install at `/Users/krishnaraj/.espressif/v6.0.2/esp-idf`)
 
@@ -73,7 +73,37 @@ Plan: pin the superloop's core, disable the idle-task watchdog for that core in
 tradeoff of the superloop choice and I'll document it in `BUILD-LOG.md` rather
 than hide it.
 
-**Please confirm this line is what you meant.**
+**DECIDED (2026-09-05): ESP-IDF v6.0.2, and the line above is the rule.**
+
+Arduino IDE was considered and rejected on evidence, not preference:
+
+1. **It does not remove FreeRTOS.** `loop()` *is* a FreeRTOS task. From the
+   installed core's own source, `cores/esp32/main.cpp:113`:
+   ```
+   xTaskCreateUniversal(loopTask, "loopTask", getArduinoLoopTaskStackSize(),
+                        NULL, 1, &loopTaskHandle, ARDUINO_RUNNING_CORE);
+   ```
+   Arduino moves the `xTaskCreate` out of your code and into the core, where you
+   cannot see or control it. That is strictly less control over the exact thing
+   the no-RTOS rule is about, not more.
+
+2. **It breaks the Option B chosen in §1b.** Arduino's RMT wrapper has no
+   transaction queue. Its own header (`esp32-hal-rmt.h`) states that a second
+   `rmtWriteAsync()` issued while a transfer is in flight returns `false`. Only
+   `rmtWriteLooping()` — Option A — is reachable there.
+
+3. The IDF toolchain is already installed, working and documented
+   (`setup-guides/phase0-toolchain-environment.md`), so Arduino's usual
+   advantage (faster setup) does not apply here.
+
+4. MVP code written against IDF ports directly into the eventual FreeRTOS
+   version. Arduino code would need rewriting.
+
+5. Arduino would also contradict omnis-info.md §1's stated philosophy
+   ("not just calling high-level Arduino libraries") for no compensating gain.
+
+Both toolchains give an *identical* "no RTOS primitive in OMNIS-authored code"
+guarantee, so there was nothing to trade away by staying with IDF.
 
 ### 1b. RMT rate-change strategy — the single biggest design decision here
 
@@ -375,18 +405,19 @@ counter stays at zero over a multi-minute run.
 
 | # | Question | Where it bites | Proposed default |
 |---|---|---|---|
-| 1 | Is the §1a "no RTOS in our code" line what you meant? | Everything | as stated |
-| 2 | RMT Option A or B? | Stage 5 | **B** |
-| 3 | Is the inner balance PID in scope? Outer loop and side-detection out? | Stage 7 | inner in, outer out |
+| ~~1~~ | ~~No-RTOS line / toolchain~~ — **DECIDED**: ESP-IDF v6.0.2; no RTOS primitive in OMNIS-authored code; IDF driver internals treated as hardware. Arduino rejected on evidence (see §1a). | — | — |
+| ~~2~~ | ~~RMT Option A or B~~ — **DECIDED**: Option B, burst re-arm. | — | — |
+| ~~3~~ | ~~Balance scope~~ — **DECIDED**: inner 500 Hz lean-angle PID in; outer velocity-bias loop and live side-detection out of the MVP. | — | — |
 | ~~4~~ | ~~IMU fault definition~~ — **RESOLVED**: the metric is the angle between the two IMUs' *estimates of vertical*, which is both readings of your wording at once. Implemented and tested. | — | — |
 | 5 | Kill switch on CRSF channel 6, 2-position (§7d read "skill" as "kill") | Stage 4 | ch 6, high = killed |
 | 6 | `VX_MAX_MMPS` etc. — proposed from Case D's ceiling, unverified on hardware | Stage 2 | 300 / 150 / 300 / 1.5 |
 | ~~7~~ | ~~Which wheel pair is grounded in balance mode~~ — **RESOLVED**: front is the OLED end, a short edge, so the chassis tips about body **Y**. Lean angle is **pitch**; the grounded pair is FL+FR or RL+RR. `omnis_balance_pair_from_pitch()` in `omnis_imu_mounting.h`. | — | — |
 | ~~8~~ | ~~IMU mount arrow interpretation~~ — **RESOLVED**: no longer an assumption. `imu_mount_resolve()` derives the descriptor from two poses (level, then nose-down) with no interpretation, verified against all 24 right-handed mountings. Run once per IMU at Stage 3 bring-up. | — | — |
 
-Only question 1 remains open, and it blocks nothing before Stage 1. Questions 4
-and 7 were resolved by the board photo and the confirmed front edge; question 8
-was closed by deriving the mounting in firmware instead of assuming it.
+**All open questions are now closed.** 1a/1b/1c decided 2026-09-05; 4 and 7
+resolved by the board photo and the confirmed front edge; 8 closed by deriving
+the mounting in firmware instead of assuming it. Questions 5 and 6 carry stated
+defaults to be confirmed on the bench at the stage that uses them.
 
 ---
 
