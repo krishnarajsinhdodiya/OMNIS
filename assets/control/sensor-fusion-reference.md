@@ -80,6 +80,38 @@ frame; a frame change does not care what they measure.
   the gyro and the accel-derived angle disagree permanently and the EKF fights
   itself forever.
 
+### OMNIS as-built — confirmed from the board
+
+Confirmed by the builder against the assembled board, 2026-09-05. Front edge is
+the OLED / button end.
+
+| IMU | I2C | Corner | Faces | Mount constant |
+|---|---|---|---|---|
+| **A** | `0x68` | front-left | **forward** (+X) | `IMU_MOUNT_IDENTITY` |
+| **B** | `0x69` | rear-right | **rearward** (−X) | `IMU_MOUNT_ROT_Z_180` |
+
+The two modules are mounted **antiparallel** — exactly the case this section
+warns about, now a confirmed property of the hardware rather than a suspicion.
+Both are component-side up, so `+Z` is unchanged and the correction is a pure
+180° rotation about Z: `{-1, -2, +3}`.
+
+Recorded in [`omnis_imu_mounting.h`](omnis_imu_mounting.h), which also carries
+the chassis diagram and the corner labelling that follows from the front edge
+(FL = front-left, matching the `δ = -1` roller pair in
+`mecanum-kinematics-reference.md` §4).
+
+> **Assumption worth one bench check.** This takes the marked arrow on each
+> module to be its sensor **+X** axis. If the arrow marks +Y instead, the
+> constants become `ROT_Z_90` / `ROT_Z_270` — still a one-line change, and step
+> 2 of the procedure below catches it in under a minute. Run it once before
+> trusting the balance loop.
+
+A wrong *global* orientation (both IMUs consistently rotated) does **not** trip
+the fault, because the two still agree with each other. It silently inverts the
+fore-aft sense of the fused pitch, and the balance controller then pushes the
+wrong way. The fault check cannot catch this class of error; only the sign check
+below can.
+
 ### How to determine yours
 
 No measurement needed — a two-minute bench procedure:

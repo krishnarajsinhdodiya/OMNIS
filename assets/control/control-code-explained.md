@@ -14,6 +14,7 @@ see [`attitude-ekf-derivation.md`](attitude-ekf-derivation.md).
 | `attitude_ekf.h/.c` | ~470 | per-IMU 4-state attitude filter (§11b) |
 | `imu_fusion.h/.c` | ~460 | mounting, fusion, fault, side detection (§11c) |
 | `pid.h/.c` | ~330 | inner PID + outer velocity-bias loop (§13b) |
+| `omnis_imu_mounting.h` | ~120 | as-built chassis frame and mount constants (header-only) |
 | `test_control.c` | ~370 | 67 host-side assertions against verified values |
 | `run_host_tests.sh` | — | `cc` + run. No ESP-IDF, no hardware. |
 
@@ -41,13 +42,14 @@ attitude_ekf_t ekf_a, ekf_b;
 attitude_ekf_init(&ekf_a, &cfg);
 attitude_ekf_init(&ekf_b, &cfg);
 
-/* Determined once on the bench — see sensor-fusion-reference.md §2. */
-const imu_mount_t mount_a = IMU_MOUNT_IDENTITY;
-const imu_mount_t mount_b = IMU_MOUNT_ROT_Z_180;
+/* As-built, confirmed against the board — see omnis_imu_mounting.h.
+ * IMU A (front-left, 0x68) faces forward; IMU B (rear-right, 0x69) faces
+ * rearward, so B needs a 180 deg Z correction. */
+const imu_mount_t mount_a = OMNIS_IMU_A_MOUNT;   /* IMU_MOUNT_IDENTITY   */
+const imu_mount_t mount_b = OMNIS_IMU_B_MOUNT;   /* IMU_MOUNT_ROT_Z_180  */
 
-/* Assert these; a bad map is invisible at runtime. */
-assert(imu_mount_is_valid(&mount_a) && imu_mount_is_right_handed(&mount_a));
-assert(imu_mount_is_valid(&mount_b) && imu_mount_is_right_handed(&mount_b));
+/* A bad map is invisible at runtime, so assert once at boot. */
+assert(omnis_imu_mounting_selfcheck());
 
 /* §12.1 — average the gyro at rest, then hand it to the filters so they do not
  * have to rediscover the bias while the robot is trying to balance. */
@@ -68,7 +70,11 @@ imu_apply_mount(&mount_a, raw_g, body_g);
 attitude_ekf_step(&ekf_a, body_g[0], body_g[1],
                   body_a[0], body_a[1], body_a[2], dt);
 
-/* ... same for imu_b ... */
+mpu6050_read(&imu_b, raw_a, raw_g);
+imu_apply_mount(&mount_b, raw_a, body_a);    /* mount_b, not mount_a */
+imu_apply_mount(&mount_b, raw_g, body_g);
+attitude_ekf_step(&ekf_b, body_g[0], body_g[1],
+                  body_a[0], body_a[1], body_a[2], dt);
 
 imu_fusion_result_t fused;
 imu_fusion_combine(&ekf_a, &ekf_b, IMU_DISAGREE_THRESH_RAD, &fused);
@@ -78,7 +84,8 @@ if (fused.fault) {
     return;                                   /* before any motor command */
 }
 
-/* Balance mode: pitch is the lean angle, roll is gimbal-locked and ignored. */
+/* Balance mode tips about body Y, so PITCH is the lean angle and roll is
+ * gimbal-locked and ignored. See omnis_imu_mounting.h. */
 const float accel_cmd = pid_update(&balance_pid,
                                    target_lean,      /* from the outer loop */
                                    fused.pitch,

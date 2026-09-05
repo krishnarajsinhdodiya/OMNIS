@@ -134,6 +134,37 @@ fighting itself.
 
 ## 4. Sign convention per wheel
 
+### Which physical corner is which — as-built
+
+Confirmed against the assembled board, 2026-09-05. **Front is the OLED / button
+end.** Everything below is stated in these labels, so getting this wrong inverts
+the meaning of the whole table.
+
+```
+                     +X  FRONT
+                       ^
+                       |
+   ┌───────────────────┼───────────────────┐
+   │  FL  [motor]      |      [motor]  FR  │
+   │  IMU_A 0x68       |                   │
+   │              OLED + buttons           │
++Y │- - - - - - - - - -+- - - - - - - - - -│ -Y
+LEFT                   |                  RIGHT
+   │                 ESP32-S3              │
+   │                   |       IMU_B 0x69  │
+   │  RL  [motor]      |      [motor]  RR  │
+   └───────────────────┼───────────────────┘
+                      REAR
+```
+
+Right-handed, +Z out of the page. Identical frame to
+[`../control/omnis_imu_mounting.h`](../control/omnis_imu_mounting.h), which
+carries the same diagram for the estimation side.
+
+The two MPU6050s sit on the **FL/RR diagonal** — which is also the `δ = -1`
+roller pair below. Coincidence of layout; nothing depends on it.
+
+
 | Wheel | Roller `δ` | `vx` | `vy` (left+) | `w` (CCW+) |
 |---|---|---|---|---|
 | **FL** | −1 | +1 | **−1** | **−k** |

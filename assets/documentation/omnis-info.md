@@ -33,7 +33,7 @@ The name is deliberately left open-ended (not tied to "car" or "stepper" specifi
 | Wheels (×4) | **Magnum wheels** (omnidirectional, angled-roller/Mecanum-style) | Angled rollers around the rim enable true sideways/diagonal movement for holonomic drive |
 | MCU module | **ESP32-S3-WROOM-1-N16R8** (16MB flash / 8MB Octal PSRAM) on EdgeHax S3 Pro dev board | N16R8 confirmed by builder. PSRAM conflict resolved — FR_STEP/FR_DIR/RR_DIR/B_DOWN moved off GPIO35–38 onto GPIO39–42 (§3a/§3b), so module PSRAM variant (Octal vs Quad) no longer matters for this design. |
 | Dev board | **EdgeHax S3 Pro** | Schematic symbol: `ESP32-S3PRO-DEVKIT-edgehax` |
-| IMUs (×2) | **MPU6050** (U6, U7) | Mounted at diagonally opposite corners for redundant/fused attitude sensing. AD0 address collision resolved: U6 = 0x68, U7 = 0x69 |
+| IMUs (×2) | **MPU6050** (U6, U7) | Mounted at diagonally opposite corners for redundant/fused attitude sensing. AD0 address collision resolved: U6 = 0x68, U7 = 0x69. **As-built (confirmed 2026-09-05):** U6/0x68 at the **front-left** corner facing forward, U7/0x69 at the **rear-right** corner facing rearward — i.e. mounted **antiparallel, 180° apart about Z**. This must be corrected in firmware before the EKF or two healthy sensors read ~20° apart and trip §11c's fault at every boot. Constants in `assets/control/omnis_imu_mounting.h` |
 | Display | **SSD1306**-based 128×64 I2C OLED (schematic symbol `DISPLAY-OLED-128X64-I2C`, designator G$1) | Controller part confirmed by builder — schematic still uses the generic OLED symbol, which is fine since the symbol doesn't need to change; drive it as SSD1306 |
 | RC link | **RadioMaster Pocket** TX + **ExpressLRS Nano Rx** receiver (U10) | CRSF over UART — see §3c for the TX/RX crossover |
 | Buzzer | **Buzzer Module** (U9, 3-pin: VCC / IO / GND) | Has its own driver IC onboard (not a bare piezo) — IO pin is a logic-level control signal |
@@ -133,7 +133,11 @@ Firmware thresholds (standard 3S LiPo guidance, stored in `params.json` → `bat
 
 ## 6. Related Files
 
-- `vscode-setup.md` — fresh-install VS Code + ESP-IDF + FreeRTOS environment setup for this project
+- `setup-guides/vscode-setup.md` — fresh-install VS Code + ESP-IDF + FreeRTOS environment setup
+- `setup-guides/phase0-toolchain-environment.md` — toolchain bring-up
+- `setup-guides/esp32-command-reference.md` — command lookup
+- **`assets/kinematics/`** — mecanum IK/FK: reference, derivation, walkthrough, and `mecanum_kinematics.{c,h}`. Fills §10.
+- **`assets/control/`** — attitude EKF, dual-IMU fusion and balance PID: reference, derivation, walkthrough, `attitude_ekf.{c,h}`, `imu_fusion.{c,h}`, `pid.{c,h}`, and the as-built `omnis_imu_mounting.h`. Fills §11 and §13's implementation.
 
 ---
 
@@ -361,42 +365,44 @@ Per §1's custom-RTOS design: SD writes belong on a low-priority task, never cal
 
 ---
 
-## 10. Mecanum Inverse-Kinematics Equations — derive externally
+## 10. Mecanum Inverse-Kinematics Equations — RESOLVED
 
-Left as a prompt rather than derived here — hand the block below to a separate chat session, then paste the result back in to replace this section once you have it.
+Derived, verified and implemented. Full material lives in **`assets/kinematics/`**:
+
+| File | Contents |
+|---|---|
+| `mecanum-kinematics-reference.md` | Mixing matrix, IK/FK, sign conventions, corner labelling, RC channel mapping, four verified test cases |
+| `mecanum-kinematics-derivation.md` | Full derivation |
+| `mecanum-kinematics-code-explained.md` | Line-by-line walkthrough |
+| `mecanum_kinematics.{c,h}` | Implementation — clamp, deadband, null-space slip metric |
+
+### The equations
 
 ```
-I'm building a 4-wheel holonomic robot using Mecanum-style ("Magnum") wheels, one
-NEMA17-class 2-phase stepper per wheel, driven by A4988 drivers in fixed 1/16
-microstepping (MS1/MS2/MS3 all tied HIGH), 200 full steps/revolution motors
-(1.8°/step) — so 3200 microsteps/revolution.
+k = (wheelbase_mm + track_width_mm) / 2            "yaw lever arm"
 
-Standard 4-wheel Mecanum layout: front-left, front-right, rear-left, rear-right,
-rollers at 45° in an X-pattern (confirm the sign convention in your derivation).
+ω_FL = ( vx - vy - k*w ) / wheel_radius_mm
+ω_FR = ( vx + vy + k*w ) / wheel_radius_mm
+ω_RL = ( vx + vy - k*w ) / wheel_radius_mm
+ω_RR = ( vx - vy + k*w ) / wheel_radius_mm
 
-Please derive, symbolically, parameterized by wheel_radius_mm, wheelbase_mm
-(front-to-back wheel-center distance), and track_width_mm (left-to-right
-wheel-center distance) — these exact variable names, since they're already fields
-in my firmware's params.json:
-
-1. Inverse kinematics: given desired body-frame velocities vx (forward/back), vy
-   (strafe left/right), and yaw rate ω (rotate in place), compute each wheel's
-   required angular velocity (rad/s), then convert to A4988 step-pulse frequency
-   (microsteps/sec) using the 3200-microsteps/rev figure above.
-2. Forward kinematics (odometry): given the four wheels' commanded step rates,
-   compute the resulting body-frame vx, vy, ω. I have no encoders (open-loop
-   steppers), so this is a commanded-velocity estimate, not a measurement — it
-   feeds a dead-reckoning / velocity-bias control loop elsewhere in my firmware.
-3. Sign conventions clearly stated per wheel (FL/FR/RL/RR), matching this RC
-   input mapping I've already fixed: throttle → vx, yaw stick → ω, pitch+roll
-   together → vy and secondary vx.
-4. A short worked numeric example with placeholder values (e.g.
-   wheel_radius_mm=30, wheelbase_mm=200, track_width_mm=180) so I can sanity-check
-   my implementation.
-
-Output as clean equations plus a small C-style pseudocode block I can drop
-directly into an ESP-IDF/FreeRTOS firmware function.
+f_i  = ω_i * STEPS_PER_RAD,   STEPS_PER_RAD = 3200/(2π) = 509.295818
 ```
+
+Strafe splits along **diagonals** (FL/RR vs FR/RL); rotation splits along
+**sides** (FL/RL vs FR/RR).
+
+### Geometry — OMNIS as-built
+
+`wheel_radius_mm = 30`, `wheelbase_mm = 223`, `track_width_mm = 230`
+→ `k = 226.5 mm`, `k/r = 7.55`.
+
+Kept as named parameters (§9f `geometry` block), never inline in the formulas.
+
+**Bench test:** command `vx = vy` (diagonal forward-left). FL and RR must be
+completely stationary. If they creep, a roller handedness assignment or a `DIR`
+invert flag is wrong.
+
 
 ---
 
@@ -404,11 +410,15 @@ directly into an ESP-IDF/FreeRTOS firmware function.
 
 ### 11a. Scope and approach
 
+> **Implemented.** Code and full documentation live in **`assets/control/`** — see §6. The notes below remain the specification; the reference docs there carry the verified numbers, tuning constants and known limitations that came out of implementing it.
+
 Two independent MPU6050s (§2, diagonally opposite corners) each run their own lightweight attitude EKF; a fusion layer above combines the two estimates and cross-checks for sensor faults. Full 3D quaternion/AHRS isn't needed — yaw isn't used by the balance controller (§13) and is left to drift; only lean angle (roll or pitch, whichever axis is currently "down") and its rate matter.
 
 ### 11b. Per-IMU EKF (run independently for U6 and U7)
 
 4-state filter: `[roll, pitch, gyro_bias_roll, gyro_bias_pitch]`.
+
+**Implementation note (confirmed):** because roll couples only to `bias_roll`, pitch only to `bias_pitch`, and `R` is diagonal, the 4×4 filter is block-diagonal and decomposes **exactly** into two independent 2-state filters. That is an identity, not an approximation — so no 4×4 covariance and no matrix inversion is needed anywhere. Verified tuning at 500Hz: `q_angle = 5e-4`, `q_bias = 1e-7`, `R = 1e-2`, giving a 0.80Hz accel/gyro crossover (τ = 0.198s) and 0.57° steady-state angle sigma.
 
 - **Process model**: `roll_dot = gyro_x − bias_roll`, `pitch_dot = gyro_y − bias_pitch`; biases modeled as a slow random walk.
 - **Measurement model**: accelerometer-derived tilt via `roll = atan2(ay, az)`, `pitch = atan2(−ax, sqrt(ay² + az²))`.
@@ -419,6 +429,10 @@ Two independent MPU6050s (§2, diagonally opposite corners) each run their own l
 
 - **Fused estimate**: inverse-covariance-weighted average of the two independent (roll, pitch) estimates.
 - **Fault detection**: if the two IMUs disagree beyond ~15°, that's a bad mount, sensor, or cable, not something to average through — flag a fault (buzzer) and fail toward the link-loss failsafe (§7f, disable steppers) rather than balance on an untrustworthy number.
+
+  **Compare gravity vectors, NOT Euler angles.** Balance mode sits at pitch ≈ ±90°, where roll is gimbal-locked and undefined. Verified: two IMUs at (roll 30°, pitch 88°) and (roll −30°, pitch 92°) differ by 60° of roll but only **3.46°** of actual disagreement about where "down" is — a naive `|roll_A − roll_B| > 15°` test false-faults continuously on a healthy robot. Reconstruct each IMU's gravity unit vector and take the angle between them; that metric is singularity-free at every attitude.
+
+  **Correct the mounting rotation first (§2).** The two modules are mounted antiparallel. Uncorrected, two healthy sensors read ~20° apart and this fault fires at every boot. This is the most likely reason a correct dual-IMU implementation refuses to arm — check it before suspecting the filter.
 - **"Which side is down" detection** (needed for §1's active-wheel-pair remapping): at rest (low gyro on both IMUs, accel ≈ 1g), read which body axis each IMU reports as aligned with gravity — that gives current "up," which maps to which wheel pair is grounded. Re-evaluate only at mode-entry or after a detected flip, not continuously, or it'll fight the controller mid-balance.
 
 ### 11d. Update rate
@@ -446,6 +460,8 @@ Populates the `imu_calibration` block already scaffolded in `params.json` (§9f)
 Best-performing self-balancing robots close an inner angle loop *and* an outer wheel-velocity loop using encoder feedback. This design has no wheel encoders — the A4988s are open-loop (§7e) — so true closed-loop velocity control isn't available with the current BOM. What follows is the best achievable architecture *without* encoders; it's what most hobbyist stepper-balance-bot projects actually run and it does work, but it has a real ceiling encoders would remove. If "absolute best" later means better than this architecture can deliver, a wheel encoder pair (even one axis) is the single highest-leverage hardware addition — flagging that now rather than pretending open-loop stepping is equivalent.
 
 ### 13b. Architecture: cascaded angle control with a velocity-bias outer loop
+
+> **Implemented.** `assets/control/pid.{c,h}` — inner PID with derivative-on-measurement taken from the raw gyro and conditional-integration anti-windup, plus the outer `vel_bias_t` loop. Gains default to **zero** per §13d rather than guessing them; `pid-reference.md` §5 carries the tuning procedure. Note the outer loop's sign: forward drive effort must command a *backward* lean.
 
 - **Inner loop (fast, 500Hz, matching §11d)**: PID on lean angle. `angle_error = target_lean_angle − fused_lean_angle` (§11c); `angle_rate` taken directly from gyro rather than differentiated from the EKF output, for lower latency. Output = commanded wheel acceleration, applied equally to both active wheels (§11c side-detection) for the fore-aft component.
 - **Turn component**: differential step-rate bias between the two active wheels, from the roll-stick "turn" input (§7c), added after the fore-aft PID output.
