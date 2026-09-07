@@ -145,3 +145,70 @@ one appears the loop is already too slow. Headroom trending toward zero is the
 
 Stages 2–7: kinematics port + host tests, MPU6050 driver + EKF, CRSF parser, RMT
 step generation, fault/buzzer, superloop integration.
+
+---
+
+## 2026-09-07 — Stage 1 bench test: PASSED
+
+First hardware run. Flashed to the EdgeHax S3 Pro over `/dev/cu.usbmodem101`,
+USB cable only, battery disconnected.
+
+### Result
+
+```
+I (0)     main_task: Started on CPU1
+I (10)    omnis: COM_ENA driven DISABLED (GPIO1 = 1) - motors are off
+I (10)    omnis:   yaw lever arm k = 226.5 mm, k/r = 7.550  (expect 226.5, 7.550)
+I (10)    tick:  500 Hz tick running (period 2000 us)
+I (2010)  omnis: 500.16 Hz | period 2000-2000 us | headroom min 1998 us | overruns 0 | uptime 2 s
+I (10010) omnis: 500.13 Hz | period 2000-2000 us | headroom min 1998 us | overruns 0 | uptime 10 s
+```
+
+| Criterion | Target | Measured | |
+|---|---|---|---|
+| Overruns | 0, sustained | **0** across all 10 windows | pass |
+| Period jitter | ±5 us | **2000–2000 us**, no measurable jitter | pass |
+| Geometry | k=226.5, k/r=7.550 | exact | pass |
+| COM_ENA at boot | disabled | `GPIO1 = 1`, before anything else | pass |
+
+Two settings confirmed working that could only be confirmed on hardware:
+
+- `main_task: Started on CPU1` — the `ESP_MAIN_TASK_AFFINITY_CPU1` pinning took
+  effect. This is the premise the plain-`volatile` flag argument rests on.
+- No task-watchdog trip over 10 s of a never-yielding loop — the CPU1 idle-WDT
+  setting took effect.
+
+**Headroom: 1998 us of 2000.** The Stage 1 loop body costs ~2 us, so 99.9% of the
+tick budget is still free for Stages 2–7. The console prints at GPIO43/44 as
+expected (`cpu_start: GPIO 44 and 43 are used as console UART I/O pins`).
+
+### Bug found and fixed: the reported rate was biased high
+
+The rate read a consistent **500.13 Hz** rather than 500.00, while `period`
+measured an exact `2000-2000 us`. The period is measured independently and is
+ground truth, so the discrepancy had to be in the reporting arithmetic — and it
+was. Two compounding off-by-ones in `main.c`:
+
+1. `window_start` was set immediately *after* the status print, which is
+   mid-period, not on a tick edge.
+2. The window counted N ticks but divided by the elapsed time of **N-1**
+   intervals plus a partial one.
+
+Arithmetic confirms it exactly: a first-tick offset of 1740 us gives
+`500 x 1e6 / (1740 + 499x2000) = 500.13 Hz`, the precise figure observed.
+
+Fixed by anchoring `window_start` on the first tick edge of each window and
+dividing by `window_ticks - 1`, since N tick edges span N-1 intervals.
+
+**Why fix a cosmetic diagnostic:** this same reporting block is how loop health
+gets judged in every later stage. A rate that reads systematically high hides
+exactly the degradation it exists to reveal — and when a real slowdown appears in
+Stage 3 or 5, nobody wants to be re-deriving whether the number is trustworthy.
+
+**The hardware was never wrong.** No timing behaviour changed; only the number
+printed about it.
+
+### Still to do
+
+Stages 2–7, unchanged. Stage 1's `PIN_TICK_HEARTBEAT` scaffolding on GPIO35
+remains and should be removed once the tick is no longer under suspicion.

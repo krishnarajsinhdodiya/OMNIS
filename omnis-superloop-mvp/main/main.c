@@ -176,9 +176,20 @@ void app_main(void)
 
         /* ---- Stage 2+ work goes here ---- */
 
-        /* Skip the very first sample of a window: its period spans the report
-         * gap and would corrupt max_period_us. */
-        if (window_ticks > 0) {
+        if (window_ticks == 0) {
+            /* Anchor the measurement window on a TICK EDGE, not on the moment
+             * the previous report finished.
+             *
+             * Anchoring it on the report instead made the window span 499 whole
+             * periods plus whatever fraction remained of the one in progress,
+             * which biased the reported rate high by exactly that shortfall. On
+             * hardware it read a stubborn 500.13 Hz while the period itself
+             * measured an exact 2000-2000 us — the bias was in this arithmetic,
+             * not in the timer. */
+            window_start = now;
+        } else {
+            /* The first period of a window spans the report gap, so it is
+             * measured but not counted. */
             if (period_us < min_period_us) min_period_us = period_us;
             if (period_us > max_period_us) max_period_us = period_us;
             if (headroom_us < min_headroom) min_headroom = headroom_us;
@@ -191,8 +202,12 @@ void app_main(void)
 
             /* Measured rate from the wall clock, not from the tick count —
              * counting ticks and dividing by the period they were configured
-             * with would just report the configuration back. */
-            const double measured_hz = (double)window_ticks * 1e6 / (double)elapsed_us;
+             * with would just report the configuration back.
+             *
+             * N tick edges span N-1 intervals. Dividing by N is the off-by-one
+             * that produced the 500.13 Hz above. */
+            const double measured_hz =
+                (double)(window_ticks - 1u) * 1e6 / (double)elapsed_us;
 
             ESP_LOGI(TAG,
                      "%.2f Hz | period %" PRIu32 "-%" PRIu32 " us "
@@ -202,8 +217,10 @@ void app_main(void)
                      min_headroom, overruns, now / 1000000);
 
             window_ticks  = 0;
-            window_start  = esp_timer_get_time();
-            last_tick_us  = window_start;
+            /* window_start is re-anchored on the next tick edge, above.
+             * last_tick_us is reset here so the report's own duration is not
+             * charged to the next window's first period. */
+            last_tick_us  = esp_timer_get_time();
             min_period_us = UINT32_MAX;
             max_period_us = 0;
             min_headroom  = UINT32_MAX;
