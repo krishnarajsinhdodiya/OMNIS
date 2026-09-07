@@ -42,6 +42,15 @@ typedef struct {
     float vx_secondary_mmps;  /**< pitch stick's additive contribution */
     float vy_max_mmps;        /**< roll at full deflection (+ = left) */
     float w_max_radps;        /**< yaw at full deflection (+ = CCW)   */
+
+    /* Stick polarity. The reference is emphatic that a transmitter which is
+     * right-positive on roll or yaw must be corrected HERE and nowhere else:
+     * "Never negate inside the kinematics." Flipping a matrix sign to fix a
+     * backwards stick breaks the IK->FK round trip and every other motion. */
+    bool invert_throttle;
+    bool invert_pitch;
+    bool invert_roll;         /**< set if stick-left gives negative */
+    bool invert_yaw;          /**< set if stick-left gives negative */
 } omnis_rc_scale_t;
 
 /** §9f "rc.channel_map". 1-based CRSF channel numbers. */

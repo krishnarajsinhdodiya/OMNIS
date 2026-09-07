@@ -16,11 +16,14 @@
 
 #include <stdio.h>
 #include <inttypes.h>
+#include <math.h>
 
 #include "driver/gpio.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "drive.h"
+#include "mecanum_kinematics.h"
 #include "omnis_pins.h"
 #include "omnis_params.h"
 #include "tick.h"
@@ -115,6 +118,92 @@ static void log_params(const omnis_params_t *p)
              (double)p->step.max_accel_steps_s2);
 }
 
+
+/* ------------------------------------------------------------------------
+ * Boot-time kinematics self-check.
+ *
+ * The same four cases the host test runs, re-checked on the Xtensa FPU. IEEE-754
+ * float32 says these must agree bit-for-bit with the Mac, but "must" and "does"
+ * are different claims and this costs microseconds to settle. A silent
+ * divergence here would surface later as a robot that drives subtly wrong.
+ * ------------------------------------------------------------------------ */
+static bool near_enough(float got, float want, float tol)
+{
+    return fabsf(got - want) <= tol;
+}
+
+static bool kinematics_selftest(const omnis_geometry_t *g)
+{
+    const float R = g->wheel_radius_mm;
+    const float L = g->wheelbase_mm;
+    const float W = g->track_width_mm;
+    const float TOL = 0.01f;
+    bool ok = true;
+
+    /* Case A - pure forward */
+    wheel_rates_t a = mecanum_inverse(200.0f, 0.0f, 0.0f, R, L, W);
+    ok &= near_enough(a.fl, 3395.305f, TOL) && near_enough(a.fr, 3395.305f, TOL)
+       && near_enough(a.rl, 3395.305f, TOL) && near_enough(a.rr, 3395.305f, TOL);
+
+    /* Case B - pure strafe left, splits along diagonals */
+    wheel_rates_t b = mecanum_inverse(0.0f, 200.0f, 0.0f, R, L, W);
+    ok &= near_enough(b.fl, -3395.305f, TOL) && near_enough(b.fr, 3395.305f, TOL)
+       && near_enough(b.rl,  3395.305f, TOL) && near_enough(b.rr, -3395.305f, TOL);
+
+    /* Case C - pure rotation CCW, splits along sides */
+    wheel_rates_t c = mecanum_inverse(0.0f, 0.0f, 1.0f, R, L, W);
+    ok &= near_enough(c.fl, -3845.183f, TOL) && near_enough(c.fr, 3845.183f, TOL)
+       && near_enough(c.rl, -3845.183f, TOL) && near_enough(c.rr, 3845.183f, TOL);
+
+    /* Case D - combined, and the IK->FK round trip that catches sign errors */
+    wheel_rates_t d = mecanum_inverse(200.0f, 100.0f, 0.5f, R, L, W);
+    ok &= near_enough(d.fl,  -224.939f, TOL) && near_enough(d.fr, 7015.550f, TOL)
+       && near_enough(d.rl,  3170.366f, TOL) && near_enough(d.rr, 3620.244f, TOL);
+
+    body_vel_t fk = mecanum_forward(&d, R, L, W);
+    ok &= near_enough(fk.vx, 200.0f, 0.01f)
+       && near_enough(fk.vy, 100.0f, 0.01f)
+       && near_enough(fk.w,    0.5f, 1e-4f);
+
+    ok &= near_enough(mecanum_null_space(&d), 0.0f, 0.01f);
+
+    /* Reference §4's bench test: a vx = vy diagonal must leave FL and RR dead
+     * still. This is the one that catches a swapped roller handedness. */
+    wheel_rates_t diag = mecanum_inverse(200.0f, 200.0f, 0.0f, R, L, W);
+    ok &= (diag.fl == 0.0f) && (diag.rr == 0.0f);
+
+    ESP_LOGI(TAG, "kinematics self-check: %s", ok ? "PASS (cases A-D + round trip"
+                                                    " + null space + diagonal)"
+                                                  : "*** FAIL ***");
+    if (ok) {
+        ESP_LOGI(TAG, "  A fwd  %.3f | B strafe %.3f | C rot %.3f | D FR %.3f",
+                 (double)a.fl, (double)b.fl, (double)c.fl, (double)d.fr);
+    }
+    return ok;
+}
+
+/* Measure drive_solve() properly: one call is only a few microseconds, and
+ * esp_timer_get_time() around a single call would be mostly measuring the
+ * timer. Average over many iterations instead. */
+static void benchmark_drive(const omnis_params_t *p)
+{
+    const int N = 5000;
+    drive_solution_t sol;
+    body_vel_t v = { 200.0f, 100.0f, 0.5f };
+
+    const int64_t t0 = esp_timer_get_time();
+    for (int i = 0; i < N; ++i) {
+        /* Vary the input so the optimiser cannot hoist the call out. */
+        v.vx = 200.0f + (float)(i & 7);
+        drive_solve(&v, &p->geometry, &p->step, &sol);
+    }
+    const int64_t t1 = esp_timer_get_time();
+
+    const double ns = (double)(t1 - t0) * 1000.0 / (double)N;
+    ESP_LOGI(TAG, "drive_solve: %.0f ns/call (%.2f%% of the 2000 us tick)",
+             ns, ns / 10.0 / 2000.0);
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "==================================================");
@@ -135,6 +224,14 @@ void app_main(void)
         while (1) { /* halt, motors off */ }
     }
     log_params(params);
+
+    /* 2b. Kinematics: prove the ported module behaves on this FPU before the
+     *     loop starts depending on it. */
+    if (!kinematics_selftest(&params->geometry)) {
+        ESP_LOGE(TAG, "KINEMATICS SELF-CHECK FAILED - refusing to run");
+        while (1) { /* halt, motors off */ }
+    }
+    benchmark_drive(params);
 
     /* 3. The tick. Registered from app_main, so the ISR lands on CPU1 —
      *    the same core as this loop. See tick.h. */
@@ -161,6 +258,14 @@ void app_main(void)
     uint32_t min_headroom   = UINT32_MAX;
     bool     heartbeat      = false;
 
+    /* Stage 2 drive-pipeline health, accumulated over the window. */
+    drive_solution_t sol;
+    uint32_t window_clamped    = 0;
+    uint32_t window_deadbanded = 0;
+    float    worst_null        = 0.0f;
+
+    drive_solution_zero(&sol);
+
     while (1) {
         /* Wait for the ISR's flag and consume it. Returns the microseconds
          * spent waiting, which is this cycle's spare time. */
@@ -174,7 +279,31 @@ void app_main(void)
         heartbeat = !heartbeat;
         gpio_set_level(PIN_TICK_HEARTBEAT, heartbeat ? 1 : 0);
 
-        /* ---- Stage 2+ work goes here ---- */
+        /* ---- Stage 2: exercise the full drive pipeline every tick ----
+         * Synthetic stick input tracing a slow circle in (vx, vy) with a bit of
+         * yaw, so all four wheels see varying rates and both the clamp and the
+         * deadband get hit during a run. The CRSF parser replaces this in
+         * Stage 4; the RMT step generator consumes sol.rates in Stage 5.
+         *
+         * The two trig calls here are part of the synthetic input, NOT of the
+         * kinematics — see the drive_solve benchmark printed at boot for the
+         * real per-call cost. */
+        const float phase = (float)(g_tick_count % 1000u) * (6.2831853f / 1000.0f);
+        const rc_sticks_t sticks = {
+            .throttle = 0.60f * cosf(phase),
+            .pitch    = 0.0f,
+            .roll     = 0.60f * sinf(phase),
+            .yaw      = 0.25f * sinf(phase * 0.5f),
+        };
+
+        drive_from_sticks(&sticks, params, &sol);
+
+        if (sol.clamped)         ++window_clamped;
+        if (sol.deadbanded > 0)  ++window_deadbanded;
+        /* The null-space metric is taken post-clamp, pre-deadband, so on a
+         * healthy command it stays at zero. Anything above float noise means
+         * the drivetrain would be fighting itself. */
+        if (fabsf(sol.null_space) > worst_null) worst_null = fabsf(sol.null_space);
 
         if (window_ticks == 0) {
             /* Anchor the measurement window on a TICK EDGE, not on the moment
@@ -211,20 +340,26 @@ void app_main(void)
 
             ESP_LOGI(TAG,
                      "%.2f Hz | period %" PRIu32 "-%" PRIu32 " us "
-                     "| headroom min %" PRIu32 " us | overruns %" PRIu32
-                     " | uptime %" PRId64 " s",
+                     "| body %" PRIu32 " us | overruns %" PRIu32
+                     " | clamp %" PRIu32 " dead %" PRIu32 " null %.4f"
+                     " | up %" PRId64 " s",
                      measured_hz, min_period_us, max_period_us,
-                     min_headroom, overruns, now / 1000000);
+                     (uint32_t)(TICK_PERIOD_US - min_headroom), overruns,
+                     window_clamped, window_deadbanded, (double)worst_null,
+                     now / 1000000);
 
             window_ticks  = 0;
             /* window_start is re-anchored on the next tick edge, above.
              * last_tick_us is reset here so the report's own duration is not
              * charged to the next window's first period. */
             last_tick_us  = esp_timer_get_time();
-            min_period_us = UINT32_MAX;
-            max_period_us = 0;
-            min_headroom  = UINT32_MAX;
-            g_tick_overruns = 0;
+            min_period_us     = UINT32_MAX;
+            max_period_us     = 0;
+            min_headroom      = UINT32_MAX;
+            window_clamped    = 0;
+            window_deadbanded = 0;
+            worst_null        = 0.0f;
+            g_tick_overruns   = 0;
         }
     }
 }

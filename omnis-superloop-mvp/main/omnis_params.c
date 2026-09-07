@@ -60,6 +60,14 @@ void omnis_params_defaults(omnis_params_t *p)
     p->rc_scale.vy_max_mmps       = 300.0f;
     p->rc_scale.w_max_radps       = 1.5f;
 
+    /* Assume the transmitter matches the reference convention (stick left ->
+     * positive vy and positive/CCW yaw). Unverified until a radio is bound in
+     * Stage 4 — if a stick turns out reversed, flip it here, never in the IK. */
+    p->rc_scale.invert_throttle   = false;
+    p->rc_scale.invert_pitch      = false;
+    p->rc_scale.invert_roll       = false;
+    p->rc_scale.invert_yaw        = false;
+
     /* --- CRSF channel map: §9f rc.channel_map, 1-based ------------------ */
     p->channel_map.throttle    = 1;
     p->channel_map.pitch       = 2;

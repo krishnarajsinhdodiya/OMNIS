@@ -3,6 +3,8 @@ idf_component_register(
         "main.c"
         "tick.c"
         "omnis_params.c"
+        "mecanum_kinematics.c"
+        "drive.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio

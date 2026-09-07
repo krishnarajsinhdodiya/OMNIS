@@ -212,3 +212,102 @@ printed about it.
 
 Stages 2–7, unchanged. Stage 1's `PIN_TICK_HEARTBEAT` scaffolding on GPIO35
 remains and should be removed once the tick is no longer under suspicion.
+
+---
+
+## 2026-09-07 — Stage 2: kinematics port, RC mapping, drive pipeline
+
+**Built:**
+
+| File | What it does |
+|---|---|
+| `main/mecanum_kinematics.{c,h}` | **Byte-identical copy** of `assets/kinematics/`. Not re-derived, not edited. |
+| `main/drive.{c,h}` | RC sticks -> body velocity, and the full pipeline in the required order |
+| `test/test_kinematics.c` | 76 host assertions against the reference's verified numbers |
+| `test/run_host_tests.sh` | `cc` + run. No ESP-IDF, no hardware. |
+
+Also added stick-polarity inverts to `omnis_rc_scale_t`, because the reference is
+emphatic that a reversed transmitter axis is corrected at the mapping layer and
+nowhere else.
+
+**Result:** 76 host assertions pass, 0 fail. Firmware builds clean, zero
+warnings, 161 KB (85% of the partition still free).
+
+### Design decisions and why
+
+**The port is byte-identical, verified by `diff`.** The whole value of that
+module is that its numbers are checked; "porting" it by retyping would throw that
+away. `diff -q` against the asset is part of the stage's verification.
+
+**The pipeline order is encoded once, in `drive_solve()`, not trusted to call
+sites.** Reference §6 has two ordering rules that are easy to get wrong and
+silent when you do:
+
+- *Clamp before computing FK.* Feeding pre-clamp rates to forward kinematics is
+  the classic open-loop drift bug — the estimator believes a velocity the
+  hardware never produced.
+- *Clamp with a common scale factor, never per-wheel.* Per-wheel clipping warps
+  the motion vector; a commanded strafe becomes an arc.
+
+**The null-space health metric is taken post-clamp but PRE-deadband.** This was
+the one genuinely non-obvious ordering call. `mecanum_clamp()` scales all four
+wheels equally so it preserves the null space, but `mecanum_deadband()` is
+deliberately a *per-wheel* operation and therefore legitimately injects
+null-space energy. Measuring after it would make the metric fire on healthy
+commands — and an alarm that cries wolf gets ignored, which is worse than not
+having it.
+
+**Forward kinematics is taken AFTER the deadband**, for the mirror-image reason:
+a deadbanded wheel genuinely will not turn, so the commanded-velocity estimate
+must reflect that.
+
+**`vx` is deliberately NOT clamped in `drive_rc_to_body()`.** Throttle and pitch
+are additive into `vx`, so full deflection on both gives 450 mm/s against a
+300 mm/s nominal. Reference §5 says handle this *either* by clamping combined
+`vx` *or* by relying on the wheel clamp — "but not both, or the response becomes
+non-linear near full stick." Chose the wheel clamp: clamping `vx` alone while
+leaving `vy` and `w` untouched would rotate the commanded motion vector, so a
+full-throttle diagonal would quietly become a *different* diagonal. The common
+factor scales all three components together, so direction survives and only
+magnitude drops.
+
+**A NaN stick reads as centred.** `clamp_unit()` fails both comparisons on NaN,
+so it is caught explicitly. Without that, one NaN channel propagates through the
+IK into a step rate. A dead stick reading as centred is the safe interpretation.
+
+**Boot-time self-check on the target.** The same four cases run on the Xtensa FPU
+at startup, and the firmware refuses to enter the superloop if they fail.
+IEEE-754 says float32 must agree bit-for-bit with the Mac, but "must" and "does"
+are different claims and this costs microseconds to settle. A silent divergence
+would otherwise surface as a robot that drives subtly wrong.
+
+### Verified numbers
+
+All four reference cases reproduce exactly:
+
+| Case | Input | FL | FR | RL | RR |
+|---|---|---|---|---|---|
+| A | `vx=200` | +3395.305 | +3395.305 | +3395.305 | +3395.305 |
+| B | `vy=200` | −3395.305 | +3395.305 | +3395.305 | −3395.305 |
+| C | `w=1.0` | −3845.183 | +3845.183 | −3845.183 | +3845.183 |
+| D | `vx=200 vy=100 w=0.5` | −224.939 | +7015.550 | +3170.366 | +3620.244 |
+
+Case D round-trips through FK to `(200.0, 100.0, 0.5)`; null space `-0.0002`
+(float32 noise). Reference §4's bench test holds: a `vx = vy` diagonal leaves FL
+and RR **exactly** `0.0f`, not merely small.
+
+### Known limitations
+
+- The per-tick stick input is **synthetic** — a slow circle in (vx, vy) with some
+  yaw, so all four wheels vary and both the clamp and deadband get exercised.
+  The CRSF parser replaces it in Stage 4.
+- Nothing drives a motor yet. `sol.rates` is computed and measured but discarded;
+  Stage 5's RMT generator is what consumes it.
+- Stick polarity inverts all default to `false` — unverified until a radio is
+  bound in Stage 4 (PLAN.md question 6 territory).
+- `vx_max_mmps` and friends remain derived-but-unverified.
+
+### Still to do
+
+Stages 3–7: MPU6050 + EKF, CRSF parser, RMT step generation, fault/buzzer,
+integration.
