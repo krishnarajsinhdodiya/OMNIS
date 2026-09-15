@@ -1,9 +1,34 @@
 # OMNIS Superloop MVP — Build Plan
 
-**Status:** PLAN APPROVED 2026-09-05. All of §1 settled. Implementation begins
-at Stage 1; no code written as of this revision.
+**Status:** PLAN APPROVED 2026-09-05. Stages 1–2 built and verified. Stages 3–7
+being completed in one pass per the 2026-09-15 change of process below.
 **Created:** 2026-09-05
 **Target:** ESP32-S3-WROOM-1-N16R8 on EdgeHax S3 Pro, ESP-IDF v6.0.2 (native macOS install at `/Users/krishnaraj/.espressif/v6.0.2/esp-idf`)
+
+---
+
+## 2026-09-15 — Change of process: finish every remaining stage in one pass
+
+The builder's Claude access lapses for about two months from 2026-09-16, and
+board Rev 2.0 is not yet assembled. Rather than stop for approval after each
+stage, they explicitly asked for **Stages 3–7 and the final documentation to be
+completed in one pass, with every intermediate step committed**. That replaces
+the "stop and wait for approval after each stage" rule in §3 for the rest of the
+build.
+
+What changes as a result:
+
+- **No stage can be bench-tested during the build.** Instead every stage is
+  built for the target with zero warnings, and host-tested wherever its logic can
+  be separated from the hardware. The bench test instructions that would have
+  been posted in chat after each stage go into **`TESTING.md`**, written to be
+  followed without help.
+- **The pinout is now board Rev 2.0** (`assets/pcb/OMNIS.kicad_sch`). The biggest
+  consequence: **COM_ENA no longer exists** — all four A4988 EN# pins are
+  hardwired to GND. Every failsafe below that says "drive COM_ENA disabled" now
+  means **"stop generating STEP pulses"**; the motors hold position rather than
+  go limp, and only removing 12 V de-energises them.
+- Everything else in this plan stands.
 
 ---
 

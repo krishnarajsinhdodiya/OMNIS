@@ -1,14 +1,34 @@
 /**
  * @file    omnis_pins.h
- * @brief   GPIO map for the OMNIS superloop MVP.
+ * @brief   GPIO map for the OMNIS superloop MVP — board Rev 2.0.
  *
- * Transcribed from omnis-info.md §3a, verified against schematic rev 1.0
- * (as revised 2026-08-16). One place, named constants, no bare GPIO numbers
- * anywhere else in this build.
+ * SOURCE OF TRUTH: assets/pcb/OMNIS.kicad_sch (Rev 2.0, supplied 2026-09-15).
+ * Every assignment below was traced pin-by-pin through the schematic's wire
+ * segments to its global label, not read off a picture. One place, named
+ * constants, no bare GPIO numbers anywhere else in this build.
  *
- * Pins belonging to EXCLUDED features are listed at the bottom as reserved, so
- * nothing in this build quietly claims one and creates a conflict when the
- * OLED / SD / buttons come back.
+ * Rev 2.0 changes firmware BEHAVIOUR, not just numbers:
+ *
+ *   1. COM_ENA IS GONE. All four A4988 EN# pins are hardwired to GND
+ *      (assets/pcb/rev2-pin-assignment.md §3). The drivers cannot be disabled
+ *      in software: whenever 12 V is present, all four motors are energised and
+ *      holding. The firmware failsafe is therefore "stop generating STEP
+ *      pulses" — the motors hold position, they do not go limp.
+ *   2. Both MPU6050 INT pins share GPIO7 with a 10 k pull-up, which only works
+ *      if both chips are configured open-drain (see PIN_IMU_INT).
+ *   3. Buzzer moved 14 -> 16 (GPIO14 belongs to the onboard microSD).
+ *
+ * The planning doc assets/pcb/rev2-pin-assignment.md disagrees with the final
+ * schematic on seven nets. The schematic wins; the doc is older:
+ *
+ *     net          schematic   planning doc
+ *     FR_STEP      40          38
+ *     FR_DIR       38          40
+ *     BL_DIR       46          41
+ *     B_SF         39          48
+ *     B_LEFT       41          46
+ *     B_RIGHT      47          39
+ *     B_SELECT     48          47
  */
 
 #ifndef OMNIS_PINS_H
@@ -16,96 +36,112 @@
 
 #include "driver/gpio.h"
 
-/* --- Stepper enable ------------------------------------------------------
- * ONE line, shared by all four A4988s. Active LOW (EN# on the driver), so
- * driving it HIGH disables every motor.
- *
- * This is the failsafe actuator for the whole machine (§7f, §7g point 5). It is
- * the first thing configured in main(), before anything else can spin a wheel.
+/* --- Stepper enable: does not exist on Rev 2.0 ---------------------------
+ * EN# is tied to GND. Kept as a named constant set to GPIO_NUM_NC so that code
+ * which wants to disable the drivers can test for it, and so that restoring the
+ * line later (the plan's hedge: a cuttable EN# link rewired to GPIO0/3/45) is a
+ * one-line change here rather than a hunt through the codebase.
  * ------------------------------------------------------------------------ */
-#define PIN_COM_ENA         GPIO_NUM_1
-
-#define COM_ENA_DISABLED    1   /**< EN# high  -> drivers off, motors free */
-#define COM_ENA_ENABLED     0   /**< EN# low   -> drivers on               */
+#define PIN_STEPPER_EN          GPIO_NUM_NC
 
 /* --- A4988 STEP / DIR, one pair per wheel --------------------------------
- * Corner labelling is as-built and confirmed: front is the OLED/button end.
- * See assets/kinematics/mecanum-kinematics-reference.md §4.
+ * Firmware corner names are the kinematics names FL / FR / RL / RR. The
+ * schematic calls the rear wheels "back": BL = RL, BR = RR. Front is the OLED /
+ * button end (assets/kinematics/mecanum-kinematics-reference.md §4).
  * ------------------------------------------------------------------------ */
-#define PIN_FL_STEP         GPIO_NUM_4
-#define PIN_FL_DIR          GPIO_NUM_5
-#define PIN_FR_STEP         GPIO_NUM_41   /* MTDI */
-#define PIN_FR_DIR          GPIO_NUM_40   /* MTDO */
-#define PIN_RL_STEP         GPIO_NUM_15
-#define PIN_RL_DIR          GPIO_NUM_16
-#define PIN_RR_STEP         GPIO_NUM_21
-#define PIN_RR_DIR          GPIO_NUM_42   /* MTMS */
+#define PIN_FL_STEP             GPIO_NUM_4    /* FL_STEP */
+#define PIN_FL_DIR              GPIO_NUM_5    /* FL_DIR  */
+#define PIN_FR_STEP             GPIO_NUM_40   /* FR_STEP, MTDO */
+#define PIN_FR_DIR              GPIO_NUM_38   /* FR_DIR  */
+#define PIN_RL_STEP             GPIO_NUM_15   /* BL_STEP */
+#define PIN_RL_DIR              GPIO_NUM_46   /* BL_DIR, STRAPPING PIN */
+#define PIN_RR_STEP             GPIO_NUM_21   /* BR_STEP */
+#define PIN_RR_DIR              GPIO_NUM_42   /* BR_DIR, MTMS */
 
-/* GPIO39-42 are the chip's default JTAG pins (MTCK/MTDO/MTDI/MTMS). They behave
- * as ordinary GPIO because the JTAG source strap is GPIO3 (B_SF), which idles
- * low (§3e). The one failure mode is holding the Special-Function button down
- * through a power cycle — which would put four load-bearing driver pins into
- * JTAG mode. Do not do that. */
+/* Pin hazards worth knowing before a wheel misbehaves:
+ *
+ * GPIO40 (FR_STEP) drives the orange LED on the EdgeHax S3 Pro. The planning
+ *   doc advised never putting a STEP line on an LED pin; the final schematic
+ *   does. It works — the LED adds ~1 mA and flickers with steps — but if the
+ *   front-right wheel misbehaves at high step rates, suspect this first. An
+ *   Espressif DevKitC-1 has no LED on GPIO40.
+ *
+ * GPIO46 (RL_DIR) is a strapping pin sampled at reset. The A4988 DIR input has
+ *   no pull of its own, so the chip's internal pull-down wins and the board
+ *   boots normally. Nothing may drive this line high during reset.
+ *
+ * GPIO38-42 behave as plain GPIO only because the JTAG-source strap, GPIO3, is
+ *   left unconnected. Do not wire anything to GPIO3. */
 
-/* --- I2C: both MPU6050s (and, in the full build, the OLED) --------------- */
-#define PIN_I2C_SDA         GPIO_NUM_8
-#define PIN_I2C_SCL         GPIO_NUM_9
+/* --- I2C: both MPU6050s (and the OLED in the full build) ----------------- */
+#define PIN_I2C_SDA             GPIO_NUM_8    /* I2C_SDA */
+#define PIN_I2C_SCL             GPIO_NUM_9    /* I2C_SCL */
 
-#define I2C_ADDR_IMU_A      0x68   /**< front-left corner, faces forward  */
-#define I2C_ADDR_IMU_B      0x69   /**< rear-right corner, faces rearward */
+#define I2C_ADDR_IMU_A          0x68   /**< MPU1: AD0 low  */
+#define I2C_ADDR_IMU_B          0x69   /**< MPU2: AD0 high */
+
+/* --- Shared MPU6050 interrupt ---------------------------------------------
+ * MPU1_INT and MPU2_INT are wired together onto GPIO7 with a 10 k (R3) pull-up
+ * to 3V3. A wired-OR of two push-pull outputs fights and can damage both
+ * chips, so BOTH MPU6050s must be configured open-drain, active-low
+ * (INT_PIN_CFG = 0xC0) before anything enables their interrupt. The MVP firmware
+ * configures that at boot, leaves the interrupt disabled, and polls the IMUs on
+ * the 500 Hz tick instead. The line is reserved here for a future data-ready
+ * trigger; nothing in this build reads it.
+ * ------------------------------------------------------------------------ */
+#define PIN_IMU_INT             GPIO_NUM_7
 
 /* --- CRSF / ExpressLRS UART ----------------------------------------------
- * THE NET NAMES ARE FROM THE RECEIVER'S PERSPECTIVE AND ARE THEREFORE
- * REVERSED FROM THE ESP32'S ROLE (omnis-info.md §3c).
+ * Rev 2.0 names these nets from the ESP32's point of view (Rev 1.0 used the
+ * receiver's, which is why the old header carried a paragraph about crossing
+ * them):
  *
- *   Schematic net "RX" -> receiver's Rx input  -> ESP32 must TRANSMIT -> GPIO17
- *   Schematic net "TX" -> receiver's Tx output -> ESP32 must RECEIVE  -> GPIO18
+ *   net "TX" -> GPIO17 -> receiver Rx   (ESP32 would transmit here)
+ *   net "RX" -> GPIO18 -> receiver Tx   (ESP32 receives CRSF here)
  *
- * Getting this backwards is the classic first-day CRSF bug: no frames arrive
- * and everything looks correctly wired.
+ * The MVP never transmits to the receiver, so the UART is opened RX-only on
+ * GPIO18. If no valid CRSF frame arrives there, crsf.c also tries GPIO17 as the
+ * receive pin, which rescues a crossed harness. Both pins stay inputs the whole
+ * time, so a crossed wire can never put two outputs against each other.
  * ------------------------------------------------------------------------ */
-#define PIN_CRSF_TX         GPIO_NUM_17   /* ESP32 TX -> receiver Rx */
-#define PIN_CRSF_RX         GPIO_NUM_18   /* ESP32 RX <- receiver Tx */
+#define PIN_CRSF_ESP_TX         GPIO_NUM_17   /* net "TX" */
+#define PIN_CRSF_ESP_RX         GPIO_NUM_18   /* net "RX" */
 
 /* --- Buzzer --------------------------------------------------------------
- * A 3-pin module with its own driver IC, not a bare piezo (§2). The IO pin is a
- * logic-level enable: drive HIGH for sound. It is NOT a PWM tone input, so
- * "pitch" is not available — patterns must be made from on/off timing.
+ * A 3-pin module with its own driver IC, not a bare piezo. The IO pin is a
+ * logic-level enable: HIGH = sound. No pitch control — patterns are built from
+ * on/off timing only.
  * ------------------------------------------------------------------------ */
-#define PIN_BUZZER          GPIO_NUM_14
-#define BUZZER_ON           1
-#define BUZZER_OFF          0
-
-/* --- Stage 1 bring-up only ----------------------------------------------
- * A spare pin toggled once per tick so the 500 Hz spine can be verified on a
- * scope or logic analyser. GPIO35 is spare per §3b (freed by the PSRAM-conflict
- * move to 39-42). Toggling every tick gives a 250 Hz square wave.
- *
- * Remove this when the tick is trusted; it is scaffolding, not a feature.
- * ------------------------------------------------------------------------ */
-#define PIN_TICK_HEARTBEAT  GPIO_NUM_35
+#define PIN_BUZZER              GPIO_NUM_16   /* BUZZER */
+#define BUZZER_ON               1
+#define BUZZER_OFF              0
 
 /* ==========================================================================
- * RESERVED — wired on the board, NOT used by this build.
+ * RESERVED — wired on the board, NOT touched by this build.
  *
- * Listed so nothing here claims one by accident. Each is deferred, not
- * abandoned; see PLAN.md "explicitly excluded".
+ * Listed so nothing here claims one by accident. Each belongs to an excluded
+ * feature (PLAN.md "explicitly excluded"): deferred, not abandoned.
  *
- *   GPIO 6            BATT_SENSE   battery divider, ADC1_5      (§3g)
- *   GPIO 10,11,12,13  microSD      CS / MOSI / CLK / MISO       (§9b)
- *   GPIO 2            B_RIGHT      button, active-HIGH          (§3d)
- *   GPIO 3            B_SF         button, active-HIGH, STRAP   (§3e)
- *   GPIO 39           B_DOWN       button, active-HIGH
- *   GPIO 45           B_SELECT     button, active-HIGH, STRAP   (§3e)
- *   GPIO 47           B_LEFT       button, active-HIGH
- *   GPIO 48           B_UP         button, active-HIGH
+ *   GPIO 6        BATT_SENSE  33k/10k divider, ADC1_CH5
+ *   GPIO 1        B_UP        button, active-HIGH, external 10k pull-down
+ *   GPIO 2        B_DOWN      button
+ *   GPIO 39       B_SF        button (MTCK)
+ *   GPIO 41       B_LEFT      button (MTDI; EdgeHax white LED pin)
+ *   GPIO 47       B_RIGHT     button
+ *   GPIO 48       B_SEL       button
  *
- * NOTE GPIO39 is listed twice in the schematic's story: it is B_DOWN in §3a.
- * This build does not use the buttons, so there is no conflict today, but the
- * full build must resolve B_DOWN against nothing else — it is genuinely just
- * the Down button.
+ *   Buttons must be configured as FLOATING inputs when they return — the
+ *   external pull-downs do the work, and an internal pull-up would fight them.
  *
- * Truly spare: GPIO 0, 7, 35(used above for heartbeat), 36, 37, 38, 43, 44, 46.
+ * DO NOT USE — deliberately unconnected in Rev 2.0:
+ *
+ *   GPIO 0        BOOT strap
+ *   GPIO 3        JTAG-source strap (keeps GPIO39-42 as GPIO)
+ *   GPIO 10-14    onboard microSD
+ *   GPIO 19, 20   native USB D-/D+ (USB-Serial-JTAG)
+ *   GPIO 35-37    octal PSRAM on N16R8 (the Stage 1 heartbeat on 35 was a bug)
+ *   GPIO 43, 44   UART0 console
+ *   GPIO 45       VDD_SPI strap — high at boot selects 1.8 V flash
  * ========================================================================== */
 
 #endif /* OMNIS_PINS_H */

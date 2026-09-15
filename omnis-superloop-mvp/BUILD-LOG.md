@@ -311,3 +311,86 @@ and RR **exactly** `0.0f`, not merely small.
 
 Stages 3–7: MPU6050 + EKF, CRSF parser, RMT step generation, fault/buzzer,
 integration.
+
+---
+
+## 2026-09-15 — Board Rev 2.0 pinout migration
+
+**Context:** the builder supplied the Rev 2.0 schematic and asked for every
+remaining stage to be finished in one pass (Claude access lapses for ~2 months
+from 2026-09-16; the board is not yet assembled). Per-stage approval is replaced
+by per-stage commits, target builds with zero warnings, host tests, and
+`TESTING.md` for the bench. Recorded in PLAN.md.
+
+**Built:** `main/omnis_pins.h` rewritten; `main/main.c` loses COM_ENA and the
+GPIO35 heartbeat; `sdkconfig.defaults` flash header 16 MB -> 8 MB; master
+`assets/documentation/omnis-info.md` §2/§3/§7/§8/§9 updated.
+
+### How the pinout was verified
+
+Three sources existed and they did not all agree:
+
+1. The rendered schematic image the builder attached.
+2. `assets/pcb/OMNIS.kicad_sch`.
+3. `assets/pcb/rev2-pin-assignment.md`, a planning document.
+
+Rather than read pin numbers off a picture, every ESP32 pin was traced through
+the KiCad file's wire segments to its global label (symbol at 231.14,125.73; lib
+pin offsets applied; BFS over wire endpoints). **The image and the schematic
+agree on all 36 GPIOs.** The planning doc disagrees on seven nets — FR_STEP,
+FR_DIR, BL_DIR and four buttons. The schematic is authoritative and is what
+`omnis_pins.h` encodes; the full table is in that header and in master
+omnis-info.md §3i.
+
+The same trace also settled a scare from the rendered image: the `MPU2_INT`
+junction appears to touch the `I2C_SDA` label. It does not. R3, `MPU1_INT` and
+`MPU2_INT` join onto GPIO7 only; `I2C_SDA`/`I2C_SCL` sit directly on the GPIO8/9
+pin ends with no wire to the interrupt net.
+
+### What Rev 2.0 changes in behaviour
+
+**COM_ENA is gone.** All four A4988 EN# pins are hardwired to GND. Consequences,
+all now reflected in code and docs:
+
+- The drivers are energised whenever 12 V is present — including before firmware
+  runs. `gpio_safe_state()` now pins the STEP lines low first, because a floating
+  STEP input on a live driver can move a wheel.
+- The failsafe is no longer "disable the drivers". It is **"stop generating STEP
+  pulses"**. The motors hold position; they do not go limp. Only unplugging the
+  battery de-energises them.
+- `PIN_STEPPER_EN` survives as `GPIO_NUM_NC`, so restoring the enable later (the
+  plan's cuttable-link hedge onto GPIO0/3/45) is a one-line change.
+
+**Shared IMU interrupt.** Both MPU6050 INT pins sit on GPIO7 with a 10 k
+pull-up. That is only safe with both chips open-drain (`INT_PIN_CFG` = 0xC0),
+which Stage 3 configures at boot.
+
+**Hazards encoded as comments in `omnis_pins.h`:** FR_STEP on GPIO40 (an EdgeHax
+LED pin — the planning doc advised against a STEP line there), RL_DIR on
+strapping pin GPIO46, and GPIO38–42 depending on GPIO3 staying NC.
+
+### Decisions
+
+**The Stage 1 heartbeat on GPIO35 was a bug, and is removed rather than moved.**
+GPIO35 is an octal-PSRAM line on the N16R8. It happened to work because PSRAM is
+not enabled in this build, but toggling a PSRAM data line at 250 Hz is not
+something to keep. The tick is verified, so the heartbeat has no remaining job.
+
+**Flash header 8 MB.** The Rev 2.0 schematic symbol is
+`ESP32-S3-DEVKITC-1U-N8R2` (8 MB); the board docs say N16R8 (16 MB). An 8 MB
+header boots on both; a 16 MB header on a real 8 MB part is the one combination
+that can misplace partitions. The app is ~0.2 MB, so nothing is lost.
+
+### Found while reading ahead — fixed in the next commit
+
+Two latent bugs in `assets/control/`, found before porting it, both of which
+would have bitten in Stage 3 or 7:
+
+1. **`pid_t` collides with POSIX.** `typedef struct {...} pid_t;` in
+   `assets/control/pid.h` conflicts with `sys/types.h`, which IDF headers pull in.
+   Confirmed on both xtensa-esp32s3-elf-gcc and host clang. The host test only
+   passed because nothing it included happened to reach `sys/types.h`.
+2. **The flat-frame pitch folds at the balance point.** Balance mode sits at
+   pitch ≈ ±90°, where `atan2(-ax, hypot(ay,az))` reads 85° for both 85° and 95°
+   of nose-down. The lean direction is lost exactly where it matters.
+   `attitude-ekf-derivation.md` §7 called this "survivable" — that was wrong.

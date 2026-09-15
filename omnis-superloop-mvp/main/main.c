@@ -33,34 +33,19 @@ static const char *TAG = "omnis";
 /* ------------------------------------------------------------------------
  * Bring every output to a safe, known state.
  *
- * ORDER MATTERS AND COM_ENA IS FIRST. omnis-info.md §7g point 5: the failsafe
- * is "a single GPIO write on the shared EN# line and should be one of the
- * earliest-tested pieces of the whole firmware". Until this runs, the A4988
- * enable line is floating and the drivers' state is undefined.
+ * BOARD REV 2.0 HAS NO STEPPER ENABLE LINE. All four A4988 EN# pins are
+ * hardwired to GND (assets/pcb/rev2-pin-assignment.md §3), so the drivers are
+ * live — energised and holding — whenever 12 V is present, from before this code
+ * runs until the battery is unplugged. The only thing firmware controls is
+ * whether STEP pulses exist.
  *
- * Note gpio_set_level() is called BEFORE gpio_config() for COM_ENA. That looks
- * backwards and is deliberate: it primes the output latch so that the instant
- * gpio_config() switches the pin to an output, it drives the disabled level
- * rather than briefly driving whatever was in the register.
+ * That makes the STEP lines the first thing to pin down: a floating STEP input
+ * on a powered driver can pick up an edge and move a wheel. They are driven low
+ * here, before anything else, and stay low until the RMT step generator takes
+ * them over.
  * ------------------------------------------------------------------------ */
 static void gpio_safe_state(void)
 {
-    /* --- The kill line, first --- */
-    gpio_set_level(PIN_COM_ENA, COM_ENA_DISABLED);
-
-    gpio_config_t ena = {
-        .pin_bit_mask = (1ULL << PIN_COM_ENA),
-        .mode         = GPIO_MODE_OUTPUT,
-        .pull_up_en   = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_DISABLE,
-    };
-    ESP_ERROR_CHECK(gpio_config(&ena));
-    gpio_set_level(PIN_COM_ENA, COM_ENA_DISABLED);
-
-    ESP_LOGI(TAG, "COM_ENA driven DISABLED (GPIO%d = %d) - motors are off",
-             (int)PIN_COM_ENA, COM_ENA_DISABLED);
-
     /* --- STEP and DIR: outputs, all low ---
      * RMT takes these over in Stage 5. Until then they are plain outputs held
      * low so nothing floats into a driver input. */
@@ -81,9 +66,13 @@ static void gpio_safe_state(void)
     gpio_set_level(PIN_RL_STEP, 0);  gpio_set_level(PIN_RL_DIR, 0);
     gpio_set_level(PIN_RR_STEP, 0);  gpio_set_level(PIN_RR_DIR, 0);
 
-    /* --- Buzzer and the bring-up heartbeat --- */
+    /* --- Buzzer ---
+     * The Stage 1 tick heartbeat on GPIO35 is gone: GPIO35 is an octal-PSRAM
+     * line on the N16R8 module, so toggling it was a live bug even though the
+     * PSRAM is not enabled in this build (flagged in
+     * assets/pcb/schematic-review-rev1.md, P4). The tick is verified. */
     const gpio_config_t misc = {
-        .pin_bit_mask = (1ULL << PIN_BUZZER) | (1ULL << PIN_TICK_HEARTBEAT),
+        .pin_bit_mask = (1ULL << PIN_BUZZER),
         .mode         = GPIO_MODE_OUTPUT,
         .pull_up_en   = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
@@ -91,10 +80,9 @@ static void gpio_safe_state(void)
     };
     ESP_ERROR_CHECK(gpio_config(&misc));
     gpio_set_level(PIN_BUZZER, BUZZER_OFF);
-    gpio_set_level(PIN_TICK_HEARTBEAT, 0);
 
-    ESP_LOGI(TAG, "STEP/DIR low, buzzer off, heartbeat on GPIO%d",
-             (int)PIN_TICK_HEARTBEAT);
+    ESP_LOGI(TAG, "STEP/DIR held low, buzzer off. NOTE: EN# is hardwired - "
+                  "motors are energised whenever 12 V is present");
 }
 
 static void log_params(const omnis_params_t *p)
@@ -207,7 +195,7 @@ static void benchmark_drive(const omnis_params_t *p)
 void app_main(void)
 {
     ESP_LOGI(TAG, "==================================================");
-    ESP_LOGI(TAG, "OMNIS superloop MVP - Stage 1 (timing spine)");
+    ESP_LOGI(TAG, "OMNIS superloop MVP - board Rev 2.0");
     ESP_LOGI(TAG, "==================================================");
 
     /* 1. Hardware safe FIRST, before anything can move. */
@@ -256,7 +244,6 @@ void app_main(void)
     uint32_t min_period_us  = UINT32_MAX;
     uint32_t max_period_us  = 0;
     uint32_t min_headroom   = UINT32_MAX;
-    bool     heartbeat      = false;
 
     /* Stage 2 drive-pipeline health, accumulated over the window. */
     drive_solution_t sol;
@@ -274,10 +261,6 @@ void app_main(void)
         const int64_t now = esp_timer_get_time();
         const uint32_t period_us = (uint32_t)(now - last_tick_us);
         last_tick_us = now;
-
-        /* Square wave at TICK_RATE/2 = 250 Hz for scope verification. */
-        heartbeat = !heartbeat;
-        gpio_set_level(PIN_TICK_HEARTBEAT, heartbeat ? 1 : 0);
 
         /* ---- Stage 2: exercise the full drive pipeline every tick ----
          * Synthetic stick input tracing a slow circle in (vx, vy) with a bit of

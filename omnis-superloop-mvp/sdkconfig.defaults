@@ -4,9 +4,15 @@
 # Regenerate sdkconfig by deleting it and rebuilding; do not hand-edit sdkconfig.
 
 # --- Target and flash ------------------------------------------------------
+# 8 MB, deliberately below the N16R8's 16 MB. The Rev 2.0 schematic symbol is
+# ESP32-S3-DEVKITC-1U-N8R2 (8 MB) while the builder's board docs say N16R8
+# (16 MB). An 8 MB image header boots on both; a 16 MB header on a real 8 MB part
+# is the one combination that can misplace partitions. The app is ~0.2 MB and the
+# default partition table uses ~1.1 MB, so nothing is lost. On a 16 MB part the
+# bootloader prints a harmless "detected size larger than header" notice.
 CONFIG_IDF_TARGET="esp32s3"
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
-CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
 
 # --- The superloop and the watchdog ----------------------------------------
 # THIS IS THE LOAD-BEARING PART OF THIS FILE.

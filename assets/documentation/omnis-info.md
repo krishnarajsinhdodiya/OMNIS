@@ -29,100 +29,115 @@ The name is deliberately left open-ended (not tied to "car" or "stepper" specifi
 | Module | Part | Notes |
 |---|---|---|
 | Wheel motors (×4) | Nidec Servo Corporation **KV4239-T3B004** (OEM cross-ref FK2-7586) | 2-phase hybrid stepper, NEMA17-class (42mm), KV42 series |
-| Stepper drivers (×4) | **A4988** | One per motor, U2–U5. RST#/SLP# tied to VCC — resolved, no longer floating |
+| Stepper drivers (×4) | **A4988** | One per motor, U2–U5. RST#/SLP# tied to VCC. **Rev 2.0: EN# hardwired to GND — no software enable (§3f)** |
 | Wheels (×4) | **Magnum wheels** (omnidirectional, angled-roller/Mecanum-style) | Angled rollers around the rim enable true sideways/diagonal movement for holonomic drive |
-| MCU module | **ESP32-S3-WROOM-1-N16R8** (16MB flash / 8MB Octal PSRAM) on EdgeHax S3 Pro dev board | N16R8 confirmed by builder. PSRAM conflict resolved — FR_STEP/FR_DIR/RR_DIR/B_DOWN moved off GPIO35–38 onto GPIO39–42 (§3a/§3b), so module PSRAM variant (Octal vs Quad) no longer matters for this design. |
+| MCU module | **ESP32-S3-WROOM-1-N16R8** (16MB flash / 8MB Octal PSRAM) on EdgeHax S3 Pro dev board | N16R8 confirmed by builder. PSRAM conflict resolved — FR_STEP/FR_DIR/RR_DIR/B_DOWN moved off GPIO35–38 onto GPIO39–42 (§3a/§3b), so module PSRAM variant (Octal vs Quad) no longer matters for this design. **Rev 2.0 note:** the KiCad schematic uses the `ESP32-S3-DEVKITC-1U-N8R2` symbol (8 MB flash); the superloop MVP therefore builds an 8 MB image header, which boots on both parts. |
 | Dev board | **EdgeHax S3 Pro** | Schematic symbol: `ESP32-S3PRO-DEVKIT-edgehax` |
-| IMUs (×2) | **MPU6050** (U6, U7) | Mounted at diagonally opposite corners for redundant/fused attitude sensing. AD0 address collision resolved: U6 = 0x68, U7 = 0x69. **As-built (confirmed 2026-09-05):** U6/0x68 at the **front-left** corner facing forward, U7/0x69 at the **rear-right** corner facing rearward — i.e. mounted **antiparallel, 180° apart about Z**. This must be corrected in firmware before the EKF or two healthy sensors read ~20° apart and trip §11c's fault at every boot. Constants in `assets/control/omnis_imu_mounting.h` |
+| IMUs (×2) | **MPU6050** (U6, U7) | Mounted at diagonally opposite corners for redundant/fused attitude sensing. AD0 address collision resolved: U6 = 0x68, U7 = 0x69. **As-built (confirmed 2026-09-05):** U6/0x68 at the **front-left** corner facing forward, U7/0x69 at the **rear-right** corner facing rearward — i.e. mounted **antiparallel, 180° apart about Z**. This must be corrected in firmware before the EKF or two healthy sensors read ~20° apart and trip §11c's fault at every boot. Constants in `assets/control/omnis_imu_mounting.h`. **Rev 2.0:** both INT pins wired-OR onto GPIO7 with a 10 kΩ pull-up — must be configured open-drain (§3h) |
 | Display | **SSD1306**-based 128×64 I2C OLED (schematic symbol `DISPLAY-OLED-128X64-I2C`, designator G$1) | Controller part confirmed by builder — schematic still uses the generic OLED symbol, which is fine since the symbol doesn't need to change; drive it as SSD1306 |
 | RC link | **RadioMaster Pocket** TX + **ExpressLRS Nano Rx** receiver (U10) | CRSF over UART — see §3c for the TX/RX crossover |
-| Buzzer | **Buzzer Module** (U9, 3-pin: VCC / IO / GND) | Has its own driver IC onboard (not a bare piezo) — IO pin is a logic-level control signal |
+| Buzzer | **Buzzer Module** (U9, 3-pin: VCC / IO / GND) | Has its own driver IC onboard (not a bare piezo) — IO pin is a logic-level control signal. **Rev 2.0: GPIO16** (moved off GPIO14, which belongs to the microSD) |
 | Buttons | 6× tactile, 4-pin (K4-6×6_TH) — Up / Down / Left / Right / Select / Special-function (B_SF) | Special-function opens an on-screen config/setup menu on the display (EdgeTX-menu-style, §14). Wired **active-HIGH** |
 | Battery | 3S LiPo (schematic power-in header labeled "12V", nominal for 3S) | Powers whole system via 2-pin header H5. **No dedicated power switch planned** — board is live whenever the battery is connected; power-off = unplug. Voltage sensed via a divider on GPIO6 — see §3g |
-| Regulator | **L7805CV** (U8) | INPUT ← battery rail, OUTPUT → regulated 5V logic rail (net "VCC" throughout the schematic) |
+| Regulator | **L7805CV** (U8) — **being replaced in Rev 2.0** | INPUT ← battery rail, OUTPUT → 5V logic rail (net "VCC"). A linear 12→5 V drop at ~0.6 A dissipates ~3.5 W and will thermally shut down; switching-regulator options are in `assets/pcb/rev2-pin-assignment.md` §4 |
 | Capacitors | 9× 150µF electrolytic (U11–U19) | One per: I2C/OLED rail, each MPU6050 (×2), each A4988 logic rail (×4), ESP32 5V input, main battery input. No voltage rating specified in the schematic — pick per rail (25V+ for the 12V/battery side, lower is fine for the 5V logic side) |
 
 
-## 3. ESP32-S3PRO GPIO Pinout — verified against schematic rev 1.0 (as revised 2026-08-16)
+## 3. ESP32-S3 GPIO Pinout — board Rev 2.0 (2026-09-15)
+
+> **Rev 2.0 supersedes Rev 1.0.** Source of truth is `assets/pcb/OMNIS.kicad_sch`. Every row below was traced pin-by-pin through the schematic's wire segments to its global label. The planning document `assets/pcb/rev2-pin-assignment.md` was written before the schematic was final and disagrees on seven nets — see §3i. Firmware follows the schematic: `omnis-superloop-mvp/main/omnis_pins.h`.
 
 ### 3a. Connected / used pins
 
-| GPIO | Net label | Connects to | Notes |
+| GPIO | Schematic net | Connects to | Notes |
 |---|---|---|---|
-| 1 | COM_ENA | EN# on **all four** A4988 drivers (shared) | Single enable line for all steppers |
-| 2 | B_RIGHT | Right button | Active-HIGH |
-| 3 | B_SF | Special-function button | Active-HIGH. |
+| 1 | B_UP | Up button | Active-HIGH, external pull-down (§3d). Freed by removing COM_ENA |
+| 2 | B_DOWN | Down button | Active-HIGH |
 | 4 | FL_STEP | Front-Left A4988 STEP | |
 | 5 | FL_DIR | Front-Left A4988 DIR | |
-| 6 | BATT_SENSE | Battery voltage divider (3S LiPo → 0–3.3V) | ADC1_5 — see §3g for divider values and cutoff thresholds |
-| 8 | SDA | I2C bus (shared: OLED + both MPU6050s) | |
-| 9 | SCL | I2C bus (shared) | Not part of the microSD wiring — confirmed against the board's pinout diagram; the SD socket only uses GPIO10–13 (§9b) |
-| 10 | SD_CS | microSD slot, `FSPICS0` | SD card SPI chip-select — confirmed from EdgeHax pinout diagram (§9b) |
-| 11 | SD_MOSI | microSD slot, `FSPID` | SD card SPI data-out (host→card) — confirmed from EdgeHax pinout diagram (§9b) |
-| 12 | SD_CLK | microSD slot, `FSPICLK` | SD card SPI clock — confirmed from EdgeHax pinout diagram (§9b) |
-| 13 | SD_MISO | microSD slot, `FSPIQ` | SD card SPI data-in (card→host) — confirmed from EdgeHax pinout diagram (§9b) |
-| 14 | BUZZ | Buzzer Module IO | Not part of the microSD wiring — confirmed against the board's pinout diagram; the SD socket only uses GPIO10–13 (§9b) |
-| 15 | RL_STEP | Rear-Left A4988 STEP | |
-| 16 | RL_DIR | Rear-Left A4988 DIR | |
-| 17 | (net "RX") | ExLRS Rx **Tx** pin | ESP32 role = UART **TX** (sends to receiver) — see §3c |
-| 18 | (net "TX") | ExLRS Rx **Rx** pin | ESP32 role = UART **RX** (receives CRSF from receiver) — see §3c |
-| 21 | RR_STEP | Rear-Right A4988 STEP | |
-| 39 (MTCK) | B_DOWN | Down button | Active-HIGH. Moved here from GPIO35 on 2026-08-16 to clear the PSRAM-conflict pins (§3b) |
-| 40 (MTDO) | FR_DIR | Front-Right A4988 DIR | |
-| 41 (MTDI) | FR_STEP | Front-Right A4988 STEP | |
-| 42 (MTMS) | RR_DIR | Rear-Right A4988 DIR | |
-| 45 | B_SELECT | Select button | Active-HIGH. |
-| 47 | B_LEFT | Left button | Active-HIGH |
-| 48 | B_UP | Up button | Active-HIGH |
+| 6 | BATT_SENSE | Battery divider | ADC1_CH5 — §3g |
+| 7 | MPU1_INT + MPU2_INT | Both MPU6050 INT pins, wired-OR, 10 kΩ (R3) pull-up to 3V3 | Both IMUs **must** be open-drain, active-low — §3h |
+| 8 | I2C_SDA | I²C bus — both MPU6050s (+ OLED) | |
+| 9 | I2C_SCL | I²C bus | |
+| 15 | BL_STEP | Rear-Left ("back-left") A4988 STEP | Firmware name `RL` |
+| 16 | BUZZER | Buzzer module IO | Moved from GPIO14 (microSD) |
+| 17 | TX | ExpressLRS receiver **Rx** input | ESP32 transmit pin — §3c |
+| 18 | RX | ExpressLRS receiver **Tx** output | ESP32 receives CRSF here — §3c |
+| 21 | BR_STEP | Rear-Right ("back-right") A4988 STEP | Firmware name `RR` |
+| 38 | FR_DIR | Front-Right A4988 DIR | The one clean pin of 35–38 on N16R8 |
+| 39 (MTCK) | B_SF | Special-function button | Plain GPIO because GPIO3 is NC (§3e) |
+| 40 (MTDO) | FR_STEP | Front-Right A4988 STEP | **EdgeHax S3 Pro orange-LED pin** — §3e |
+| 41 (MTDI) | B_LEFT | Left button | EdgeHax white-LED pin |
+| 42 (MTMS) | BR_DIR | Rear-Right A4988 DIR | EdgeHax green-LED pin — LED shows wheel direction |
+| 46 | BL_DIR | Rear-Left A4988 DIR | **Strapping pin** — §3e |
+| 47 | B_RIGHT | Right button | |
+| 48 | B_SEL | Select button | |
 
-### 3b. Unconnected / spare pins (per revised schematic)
+### 3b. Deliberately unconnected
 
-GPIO 0, 7, 35, 36, 37, 38, 43 (U0TX), 44 (U0RX), 46, 19 (USB D−), 20 (USB D+). Also both 3V3 pins and RST are unconnected/not wired to anything in this schematic. Two of the board's GND pins on the right side and one on the top-right are likewise unwired stubs (the board's other GND pins do the actual return-current work).
+| GPIO | Why |
+|---|---|
+| 0 | BOOT strap — a pulled-down button here would force download mode |
+| 3 | JTAG-source strap — left NC so GPIO39–42 stay ordinary GPIO |
+| 10–14 | Onboard microSD |
+| 19, 20 | Native USB D−/D+ (USB-Serial-JTAG) |
+| 35, 36, 37 | Octal PSRAM on N16R8 — unusable (the Stage 1 firmware heartbeat on GPIO35 was a bug, since removed) |
+| 43, 44 | UART0 console |
+| 45 | VDD_SPI strap — HIGH at boot selects 1.8 V flash; the board will not boot |
 
-GPIO 6 — previously listed here — is now the battery-voltage sense line (§3g). GPIO 10, 11, 12, 13 — also previously listed here — are now claimed by the onboard microSD slot (SPI CS/MOSI/CLK/MISO, §9b); both moved to §3a.
+Free for future use: GPIO **0, 3, 45**, all strap-limited. The plan reserves them for restoring a software stepper enable (§3f).
 
-GPIO35–38 are now the spare pins (freed up by the move to 39–42, detailed above), a reversal from the original layout where 35–38 were used and 39–42 were spare.
+### 3c. CRSF UART — nets now named from the ESP32's side
 
-Note GPIO43/44 (the chip's default UART0 TX/RX, normally used for USB-serial flashing/monitor) are spare here — confirms ExLRS is on a separate UART (17/18), not sharing the flashing port.
+Rev 1.0 named the CRSF nets from the receiver's perspective. Rev 2.0 names them from the ESP32's: net `TX` (GPIO17) → receiver Rx, net `RX` (GPIO18) ← receiver Tx. The planning doc recommends renaming them `CRSF_ESP_TX` / `CRSF_ESP_RX` so the ambiguity leaves the board entirely.
 
-### 3c. ExpressLRS UART — net names are from the receiver's perspective
+The superloop MVP never transmits to the receiver, so it opens the UART **RX-only** on GPIO18 and, if no valid CRSF frame arrives, also tries GPIO17 as the receive pin — which rescues a crossed harness. Both pins stay inputs throughout, so a crossed wire can never put two outputs against each other.
 
-The schematic net called **"RX"** connects to the ExLRS Rx module's own **Rx** input pin, and the net called **"TX"** connects to its **Tx** output pin. Since the receiver's Tx must feed the ESP32's RX, and the receiver's Rx must be fed by the ESP32's TX, the roles are the **reverse** of the label when you configure the ESP32's UART:
+### 3d. Buttons — active-HIGH with external pull-downs
 
-- **GPIO17** (on the "RX" net) → configure as ESP32 UART **TX** in firmware
-- **GPIO18** (on the "TX" net) → configure as ESP32 UART **RX** in firmware
+Common rail is **3V3** (Rev 1.0 fed 5 V into GPIOs — fault E1). Each button has a 10 kΩ pull-down, 1 kΩ series resistor and 100 nF filter (`rev2-pin-assignment.md` §1); software finishes the debounce. Firmware must configure them as **floating inputs** — an internal pull-up would fight the external pull-down. Buttons are excluded from the superloop MVP and are left untouched.
 
-This is a common gotcha — worth a code comment when you set up the UART driver.
+### 3e. Strapping pins, JTAG pins and devkit LEDs
 
-### 3d. Buttons are active-HIGH
+- **GPIO46 carries BL_DIR.** GPIO46 is sampled at reset. The A4988 DIR input has no pull of its own, so the chip's internal pull-down wins and boot is normal. Nothing may drive BL_DIR high during reset.
+- **GPIO39–42 are the JTAG pins.** They behave as GPIO because the JTAG-source strap, GPIO3, is NC. The Rev 1.0 hazard (B_SF on GPIO3, so holding the button through power-on handed four driver pins to JTAG) is gone by construction.
+- **GPIO40/41/42 drive the EdgeHax S3 Pro's orange/white/green LEDs.** The final schematic puts **FR_STEP on GPIO40**, which the planning doc specifically advised against. It works electrically — the LED adds ~1 mA of load and flickers with steps — but if the front-right wheel misbehaves at high step rates, suspect this first. An Espressif DevKitC-1 has no LEDs on these pins.
 
-All six buttons wire one leg to VCC and the other leg out to the GPIO net. Pressed = pin pulled to VCC (HIGH). Idle = pin floats unless you add a pull-down. **You'll need internal pull-downs enabled (or external pull-down resistors)** on all six button GPIOs — the opposite of the "active-low with internal pull-ups" assumption in earlier notes. **Still open** — internal vs. external pull-downs not yet decided (see §5).
+### 3f. A4988 driver wiring (all four identical)
 
-### 3e. Strapping pins reused as button/driver inputs
-
-GPIO3 (B_SF) and GPIO45 (B_SELECT) are two of the ESP32-S3's four strapping pins (sampled only at reset/boot). Since these buttons idle LOW (with a pull-down) and are only pulled HIGH when physically pressed, this should be safe in normal use — just avoid holding Special-Function or Select down while power-cycling the board, since that could alter boot behavior (GPIO45 in particular affects VDD_SPI voltage selection).
-
-Related consideration: GPIO39–42 are the chip's default JTAG pins (MTCK/MTDO/MTDI/MTMS), and whether they behave as plain GPIO depends on the JTAG signal-source strap, which is GPIO3 (B_SF) itself. Since B_SF idles low, JTAG stays on its USB-JTAG default and 39–42 behave as ordinary GPIO in normal operation — the only failure mode is holding B_SF down through a power-cycle, the same caution as above, now extended to four load-bearing driver pins instead of just spares.
-
-### 3f. A4988 driver wiring (all four identical: U2–U5)
-
-- **EN#** ← COM_ENA (shared)
-- **MS1/MS2/MS3/RST#/SLP#** — all five bridged together and tied to VCC (5V logic), which fixes microstepping at **1/16** (MS1=MS2=MS3=HIGH per the A4988 truth table) — 200 full steps/rev × 16 = 3200 microsteps/rev. Referenced by §10's kinematics prompt.
-- **STEP/DIR** → per-wheel GPIOs (§3a)
-- **VMOT/GND** → battery rail / GND (motor power)
-- **VDD/GND** → 5V logic rail / GND (driver logic power), each with its own 150µF decoupling cap
-- **2B/2A/1A/1B** (motor coil outputs) → 4-pin header per driver (H1–H4) going to the physical motor connector
-- **Current-limit (Vref) trim pot** — not yet set. Each A4988 has an onboard pot setting `Imax = Vref / (8 × Rsense)`; get this wrong and you either starve the motors of torque or overheat a driver/motor on first power-up. Set per the KV4239-T3B004's rated current before ever spinning a wheel — see §13c for why generous margin here also matters for balance-mode reliability.
+- **EN# → GND, hardwired. COM_ENA no longer exists.** The drivers cannot be disabled in software: whenever 12 V is present all four motors are energised and holding, with continuous heat and battery drain at standstill. Every failsafe that used to "drive COM_ENA disabled" now **stops generating STEP pulses** — the motors hold position rather than going limp, and only removing 12 V de-energises them. Hedge from the plan: bring EN# to GND through a 0 Ω link or jumper, so the enable can later be restored onto GPIO0/3/45 without a respin.
+- **MS1/MS2/MS3/RST#/SLP#** tied to VCC → **1/16 microstepping, 3200 microsteps/rev**, which is what `mecanum_kinematics.h` assumes.
+- **STEP/DIR** → per-wheel GPIOs (§3a). VDD from 5 V is in spec for 3.3 V logic drive; 3.3 V VDD removes the level mismatch (plan §7).
+- **VMOT** → 12 V with **100 µF bulk + 100 nF ceramic at every driver**. Rev 1.0 placed the bulk capacitor on VDD, which is the classic way to destroy an A4988. **Pin 9 (logic GND) must be connected** — it reads as unconnected on Rev 1.0.
+- **Current limit (Vref trim pot) — still not set.** Set it for the KV4239-T3B004's rated current before ever applying 12 V (§13c). With EN# hardwired this is now more urgent: the motors draw holding current the instant the battery is connected.
 
 ### 3g. Battery voltage sense (GPIO6)
 
-3S LiPo pack voltage sensed via a resistive divider into GPIO6 (ADC1_5 — deliberately an ADC1 pin rather than ADC2, since ADC2 is the one that gets unreliable while Wi-Fi is active on this chip family; this sidesteps that for free).
+Rev 2.0 divider: **R1 = 33 kΩ** (battery side) and **R2 = 10 kΩ**, both 1 %, with **100 nF at the GPIO pin**. Divisor 4.30 → 2.93 V at a full 12.6 V pack. The 7.7 kΩ source impedance suits the ADC sample-and-hold. Use `ADC_UNIT_1` / `ADC_CHANNEL_5` / `ADC_ATTEN_DB_12` with curve-fitting calibration, multisample, and filter hard (~200 ms) before acting on the value — stepper acceleration sags the rail for real.
 
-Divider: **R_top = 120kΩ** (battery+ side) to **R_bottom = 33kΩ** (GPIO6 to GND), ratio ≈ 0.216. At a full 3S charge (12.6V) that's ~2.72V at the pin — safely under the 3.3V ADC ceiling with margin for an overvoltage fault; at a near-empty pack (9V) it's ~1.94V, still well inside the ADC's usable range. Add a 100nF cap across R_bottom to filter switching noise from the nearby steppers.
+Firmware thresholds (§9f): warn at 10.5 V, cut off at 9.9 V. **With COM_ENA gone the cutoff can no longer disable the drivers** — it can only stop stepping and alarm; the motors keep drawing holding current until the battery is unplugged. Battery sensing is excluded from the superloop MVP.
 
-Use ESP-IDF's ADC calibration API (`adc_cali_create_scheme_curve_fitting` on ESP32-S3) rather than raw ADC counts — the raw-to-voltage mapping is non-linear enough on this chip to matter for a threshold-triggered cutoff.
+### 3h. Shared IMU interrupt line (GPIO7)
 
-Firmware thresholds (standard 3S LiPo guidance, stored in `params.json` → `battery`, §9f): warn at 3.5V/cell (10.5V pack, buzzer chirp), hard cutoff at 3.3V/cell (9.9V pack, force COM_ENA disable regardless of drive mode) — over-discharging a LiPo is a safety issue, not just a performance one.
+R3 (10 kΩ to 3V3), `MPU1_INT` and `MPU2_INT` meet at two junctions and run to GPIO7. Verified in the KiCad file: `I2C_SDA` and `I2C_SCL` land directly on the GPIO8/9 pin ends and are not connected to that net, despite looking adjacent in the rendered schematic.
+
+A wired-OR only works if **both MPU6050s are configured open-drain, active-low** — `INT_PIN_CFG` (0x37) = `0xC0`. Push-pull outputs tied together fight. The superloop MVP writes that at boot, keeps the interrupt itself disabled, and polls both IMUs on the 500 Hz tick. Cost of sharing the line: the pin alone cannot say which IMU fired, so a dead IMU has to be detected from I²C behaviour (errors, frozen data) — which is how the MVP does it.
+
+### 3i. Final schematic vs `rev2-pin-assignment.md`
+
+The planning doc predates the finished schematic. Where they disagree, **the schematic is authoritative** and the firmware follows it:
+
+| Net | Final schematic | Planning doc |
+|---|---|---|
+| FR_STEP | **GPIO40** | GPIO38 |
+| FR_DIR | **GPIO38** | GPIO40 |
+| BL_DIR (RL_DIR) | **GPIO46** | GPIO41 |
+| B_SF | **GPIO39** | GPIO48 |
+| B_LEFT | **GPIO41** | GPIO46 |
+| B_RIGHT | **GPIO47** | GPIO39 |
+| B_SELECT | **GPIO48** | GPIO47 |
+
+Every other net agrees. If the schematic is ever changed back to match the planning doc, only `omnis_pins.h` needs editing.
 
 ---
 
@@ -182,7 +197,7 @@ GPIO17 = ESP32 UART TX (feeds the ExLRS Rx module's Rx pin), GPIO18 = ESP32 UART
 
 ### 7d. Open interpretation questions — resolve before coding, tracked in §5
 
-- "Emergency skill switch" → read as emergency kill switch (immediately drive COM_ENA / GPIO1 to the disabled state, independent of drive mode). If "skill" was literal, the whole channel assignment above needs revisiting.
+- "Emergency skill switch" → read as emergency kill switch (originally: drive COM_ENA / GPIO1 to the disabled state. **Rev 2.0 removed COM_ENA** — EN# is hardwired to GND — so the kill switch now immediately stops all STEP generation, independent of drive mode; the motors hold position rather than going limp). If "skill" was literal, the whole channel assignment above needs revisiting.
 - Heading-hold: hold-for-duration (release = free yaw) vs. single-press toggle — different firmware (level-trigger vs. edge-trigger). Pick one.
 - IMU trim pot: a static bias added to the balance-angle setpoint (compensates for an off-center CG, see §13b) vs. a live gain/sensitivity trim on the EKF's control response — these are different variables in the control loop. The former is the far more common use of a trim pot on a balancing platform.
 
@@ -192,7 +207,7 @@ GPIO17 = ESP32 UART TX (feeds the ExLRS Rx module's Rx pin), GPIO18 = ESP32 UART
 
 ### 7f. Failsafe on link loss — not in the original spec, surfacing because it matters here
 
-CRSF/ExpressLRS failsafe behavior (no-pulses / hold-last-value / defined failsafe value) is configurable in the transmitter/receiver pairing. "Hold last value" on the drive channels is the wrong default here — if the link drops mid-deflection, the robot keeps executing that command with no radio watching it. Handle this in firmware (on CRSF frame timeout, not just the receiver's own failsafe pulses): drive COM_ENA HIGH immediately. In balance mode, cutting power makes the robot fall — decide whether that's acceptable (most Segway-style bots are designed to just sit/fall safely) or whether a controlled sit-down sequence is wanted first.
+CRSF/ExpressLRS failsafe behavior (no-pulses / hold-last-value / defined failsafe value) is configurable in the transmitter/receiver pairing. "Hold last value" on the drive channels is the wrong default here — if the link drops mid-deflection, the robot keeps executing that command with no radio watching it. Handle this in firmware (on CRSF frame timeout, not just the receiver's own failsafe pulses): stop all STEP generation immediately (originally "drive COM_ENA HIGH"; Rev 2.0 has no COM_ENA — see §3f). In balance mode, cutting power makes the robot fall — decide whether that's acceptable (most Segway-style bots are designed to just sit/fall safely) or whether a controlled sit-down sequence is wanted first.
 
 ### 7g. Practical firmware build order this implies
 
@@ -200,7 +215,7 @@ CRSF/ExpressLRS failsafe behavior (no-pulses / hold-last-value / defined failsaf
 2. Switch/button debounce + mode-state machine (drive mode, speed limiter, kill, position-hold, heading-hold) — settle momentary-vs-toggle behavior here (7d).
 3. Flat-mode mecanum mixing — bench-testable with the robot on its wheels, no balance loop needed yet.
 4. Balance-mode control loop (§13) — depends on the EKF work in §11.
-5. Kill-switch and link-loss failsafe wired in at the top of the control loop from the start, not bolted on last — it's a single GPIO write (shared EN# line, §3f) and should be one of the earliest-tested pieces of the whole firmware.
+5. Kill-switch and link-loss failsafe wired in at the top of the control loop from the start, not bolted on last — it's a single GPIO write (shared EN# line, §3f) — *Rev 2.0: EN# is hardwired, so this is now "stop STEP generation"* and should be one of the earliest-tested pieces of the whole firmware.
 
 ---
 
@@ -249,7 +264,7 @@ Enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. A newly-flashed image boots into
 - **Wi-Fi credentials: store in `params.json` on the SD card** (§9f, `wifi` block) — not `nvs`, not a `wifi_provisioning` flow. This project already committed to SD-card-based configuration for everything else (§9); a second settings path (SoftAP/BLE provisioning) would reintroduce the exact "two stores that can disagree" problem §9f already warns against. Trade-off: changing networks means pulling the card, not tapping through a phone app — fine for a single-owner hobby robot. `nvs` can still cache the last-used credentials for faster reconnects if wanted, but `params.json` stays the source of truth.
 - **Only perform OTA while stationary, not mid-balance.** Flash erase/write can introduce scheduling jitter on the update task's core; on a two-wheel balancer relying on a tight IMU-EKF-motor timing loop, that jitter is a fall risk. Gate OTA start on drive-mode == flat (or explicitly parked) in firmware.
 - Show OTA progress on the OLED (percent written) and a buzzer cue on start/success/failure — a 1–2MB write can take tens of seconds with no other indication it hasn't hung.
-- Disable COM_ENA before starting the OTA write and keep it disabled through the post-OTA reboot, on top of the "parked only" gate above.
+- Disable COM_ENA before starting the OTA write and keep it disabled through the post-OTA reboot, on top of the "parked only" gate above. *(Rev 2.0: COM_ENA no longer exists — EN# is hardwired, so the drivers stay energised through an update. This becomes "stop all stepping, require parked".)*
 
 ### 8h. Practical firmware build order this adds
 
@@ -277,7 +292,7 @@ GPIO 12 = FSPICLK (SD CLK)   — confirmed
 GPIO 13 = FSPIQ   (SD MISO)  — confirmed
 ```
 
-No conflict with I2C SCL (GPIO9) or the buzzer (GPIO14) — both stay exactly as originally assigned in §3a. SDMMC mode is off the table (only 4 lines, no DAT0–3/CMD), so `sdmmc_host` isn't needed, only `sdspi_host`.
+No conflict with I2C SCL (GPIO9) or the buzzer (GPIO14) — both stay exactly as originally assigned in §3a. SDMMC mode is off the table (only 4 lines, no DAT0–3/CMD), so `sdmmc_host` isn't needed, only `sdspi_host`. **Rev 2.0 correction:** the EdgeHax pinout card brackets **five** microSD lines, GPIO10–14, so the buzzer did collide with the socket; it moved to GPIO16 (§3a).
 
 ### 9c. Filesystem and library choice
 
