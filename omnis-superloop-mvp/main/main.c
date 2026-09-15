@@ -22,12 +22,14 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "crsf.h"
 #include "drive.h"
 #include "imu.h"
 #include "mecanum_kinematics.h"
 #include "omnis_config.h"
 #include "omnis_pins.h"
 #include "omnis_params.h"
+#include "rc_input.h"
 #include "tick.h"
 
 static const char *TAG = "omnis";
@@ -194,6 +196,13 @@ static void benchmark_drive(const omnis_params_t *p)
              ns, ns / 10.0 / 2000.0);
 }
 
+/* Serviced once per tick while the boot-time IMU calibration holds the loop,
+ * so the radio link is already found and locked by the time it finishes. */
+static void boot_tick_hook(void)
+{
+    crsf_poll(esp_timer_get_time());
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "==================================================");
@@ -230,6 +239,13 @@ void app_main(void)
         while (1) { /* halt, motors off */ }
     }
 
+    /* 3b. Radio. Started before the IMUs so it is already listening — and
+     *     probing the RX pin if needed — during the 2 s gyro calibration. */
+    if (!crsf_init(params)) {
+        ESP_LOGE(TAG, "CRSF UART INIT FAILED - refusing to run");
+        while (1) { /* halt, STEP lines low */ }
+    }
+
     /* 4. Both IMUs. Stage 3 halts on failure; Stage 6 turns this into a latched
      *    fault that blocks arming instead, so the radio and buzzer keep working
      *    and the reason is reported. */
@@ -242,7 +258,7 @@ void app_main(void)
     imu_run_mount_wizard();   /* never returns */
 #endif
 
-    if (!imu_calibrate(params, NULL)) {
+    if (!imu_calibrate(params, boot_tick_hook)) {
         ESP_LOGE(TAG, "IMU CALIBRATION FAILED - keep the robot still at power-on");
         while (1) { /* halt, STEP lines low */ }
     }
@@ -293,23 +309,31 @@ void app_main(void)
         if (!imu.valid)                      ++window_imu_invalid;
         if (imu.disagreement > worst_disagree) worst_disagree = imu.disagreement;
 
-        /* ---- Stage 2: exercise the full drive pipeline every tick ----
-         * Synthetic stick input tracing a slow circle in (vx, vy) with a bit of
-         * yaw, so all four wheels see varying rates and both the clamp and the
-         * deadband get hit during a run. The CRSF parser replaces this in
-         * Stage 4; the RMT step generator consumes sol.rates in Stage 5.
-         *
-         * The two trig calls here are part of the synthetic input, NOT of the
-         * kinematics — see the drive_solve benchmark printed at boot for the
-         * real per-call cost. */
-        const float phase = (float)(g_tick_count % 1000u) * (6.2831853f / 1000.0f);
-        const rc_sticks_t sticks = {
-            .throttle = 0.60f * cosf(phase),
-            .pitch    = 0.0f,
-            .roll     = 0.60f * sinf(phase),
-            .yaw      = 0.25f * sinf(phase * 0.5f),
-        };
+        /* ---- Stage 4: radio ----
+         * Whenever the link is not OK the command is NEUTRAL: centred sticks and
+         * no arm request. §7f is explicit that holding the last value on link loss
+         * is the wrong behaviour. */
+        crsf_poll(now);
+        const bool   link_ok = crsf_link_ok(now);
+        rc_command_t rc;
+        if (link_ok) {
+            rc_input_decode(crsf_channels(), &params->channel_map, &params->rc, &rc);
+        } else {
+            rc_command_neutral(&rc);
+        }
 
+        /* ---- Drive pipeline, now fed by the radio ----
+         * The speed-limiter switch scales the sticks before kinematics, so a LOW
+         * setting limits every motion equally rather than clipping some axes.
+         * Stage 5 hands sol.rates to the step generator; until then they are
+         * computed and measured but drive nothing. */
+        const float speed = rc_speed_scale(rc.speed, &params->control);
+        const rc_sticks_t sticks = {
+            .throttle = rc.sticks.throttle * speed,
+            .pitch    = rc.sticks.pitch    * speed,
+            .roll     = rc.sticks.roll     * speed,
+            .yaw      = rc.sticks.yaw      * speed,
+        };
         drive_from_sticks(&sticks, params, &sol);
 
         if (sol.clamped)         ++window_clamped;
@@ -354,20 +378,29 @@ void app_main(void)
 
             /* One line, deliberately: every log line costs milliseconds, and
              * this report sits outside the measurement window for that reason. */
+            crsf_status_t cs;
+            crsf_get_status(now, &cs);
             ESP_LOGI(TAG,
                      "%.2f Hz | body %" PRIu32 " us ovr %" PRIu32
-                     " | imu r %+.1f p %+.1f dis %.2f i2c %" PRIu32 " us bad %" PRIu32
-                     "%s%s | clamp %" PRIu32 " null %.4f | up %" PRId64 " s",
+                     " | imu r %+.1f p %+.1f dis %.2f i2c %" PRIu32 " us bad %" PRIu32 "%s%s"
+                     " | rc %s gpio%d LQ %u crc %" PRIu32
+                     " arm %d mode %s spd %s thr %+.2f rol %+.2f yaw %+.2f | up %" PRId64 " s",
                      measured_hz, (uint32_t)(TICK_PERIOD_US - min_headroom), overruns,
                      (double)(imu.roll * 57.29578f), (double)(imu.pitch * 57.29578f),
                      (double)(worst_disagree * 57.29578f), window_i2c_max_us,
                      window_imu_invalid,
                      imu.fault_comm ? " COMM-FAULT" : "",
                      imu.fault_disagree ? " DISAGREE-FAULT" : "",
-                     window_clamped, (double)worst_null, now / 1000000);
+                     !cs.locked ? "NONE" : (link_ok ? "OK" : "LOST"), cs.rx_pin,
+                     (unsigned)cs.uplink_lq, cs.crc_errors,
+                     rc.arm_request ? 1 : 0, rc_switch_name(rc.drive_mode),
+                     rc_switch_name(rc.speed), (double)rc.sticks.throttle,
+                     (double)rc.sticks.roll, (double)rc.sticks.yaw, now / 1000000);
             (void)min_period_us;
             (void)max_period_us;
             (void)window_deadbanded;
+            (void)window_clamped;
+            (void)worst_null;
 
             window_ticks  = 0;
             /* window_start is re-anchored on the next tick edge, above.

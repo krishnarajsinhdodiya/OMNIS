@@ -10,11 +10,15 @@ idf_component_register(
         "attitude_ekf.c"
         "imu_fusion.c"
         "pid.c"
+        "crsf_parser.c"
+        "rc_input.c"
+        "crsf.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio
         esp_driver_gptimer
         esp_timer
         esp_driver_i2c
+        esp_driver_uart
         esp_rom
 )

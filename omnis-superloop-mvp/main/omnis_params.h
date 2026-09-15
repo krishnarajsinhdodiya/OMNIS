@@ -59,7 +59,13 @@ typedef struct {
     uint8_t pitch;
     uint8_t roll;
     uint8_t yaw;
+    /* ARM switch (§7a's "emergency kill switch"). HIGH = motors permitted; LOW
+     * or MID = never. The field keeps §9f's name so params.json stays aligned. */
     uint8_t kill_switch;
+    uint8_t drive_mode;          /**< 3-pos: LOW flat, MID balance, HIGH auto */
+    uint8_t speed_limiter;       /**< 3-pos: LOW / MID / HIGH                  */
+    uint8_t tune_pot;            /**< S1 slider — optional live kp tuning      */
+    bool    arm_switch_invert;   /**< true if the switch reads LOW when "up"   */
 } omnis_channel_map_t;
 
 /** Step-generation limits (§13c: the only defence against lost steps). */
@@ -93,6 +99,22 @@ typedef struct {
     float    flat_tilt_fault_rad;     /**< armed in flat mode and tipped past this   */
 } omnis_imu_params_t;
 
+/** Radio link settings. */
+typedef struct {
+    uint32_t crsf_baud;          /**< ExpressLRS default for CRSF: 420000      */
+    float    stick_deadzone;     /**< rescaled deadzone on the four sticks     */
+    float    center_tolerance;   /**< arming requires every stick within this  */
+    uint32_t pin_probe_ms;       /**< no frames -> try the other RX pin        */
+    uint8_t  min_link_quality;   /**< uplink LQ floor [%]; 0 disables          */
+} omnis_rc_params_t;
+
+/** §9f "control": speed-limiter switch scale factors. */
+typedef struct {
+    float speed_low;
+    float speed_med;
+    float speed_high;
+} omnis_control_t;
+
 /** Everything, in one place. */
 typedef struct {
     uint32_t             schema_version;
@@ -102,6 +124,8 @@ typedef struct {
     omnis_step_limits_t  step;
     omnis_balance_t      balance;
     omnis_imu_params_t   imu;
+    omnis_rc_params_t    rc;
+    omnis_control_t      control;
     uint32_t             rc_timeout_us;   /**< link-loss threshold (§7f) */
 } omnis_params_t;
 

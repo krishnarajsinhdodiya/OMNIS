@@ -69,11 +69,19 @@ void omnis_params_defaults(omnis_params_t *p)
     p->rc_scale.invert_yaw        = false;
 
     /* --- CRSF channel map: §9f rc.channel_map, 1-based ------------------ */
-    p->channel_map.throttle    = 1;
-    p->channel_map.pitch       = 2;
-    p->channel_map.roll        = 3;
-    p->channel_map.yaw         = 4;
-    p->channel_map.kill_switch = 6;
+    /* NOTE: EdgeTX's default channel order for a new model is AETR — ch1 aileron
+     * (roll), ch2 elevator (pitch), ch3 throttle, ch4 rudder (yaw). This map is
+     * §9f's T-E-A-R order. Either reorder the mixer on the RadioMaster Pocket or
+     * change these four numbers; TESTING.md Stage 4 has the check. */
+    p->channel_map.throttle          = 1;
+    p->channel_map.pitch             = 2;
+    p->channel_map.roll              = 3;
+    p->channel_map.yaw               = 4;
+    p->channel_map.kill_switch       = 6;
+    p->channel_map.drive_mode        = 8;
+    p->channel_map.speed_limiter     = 9;
+    p->channel_map.tune_pot          = 10;
+    p->channel_map.arm_switch_invert = false;
 
     /* --- Balance ---------------------------------------------------------
      * ZERO GAINS ON PURPOSE. omnis-info.md §13d declines to guess PID gains
@@ -115,6 +123,24 @@ void omnis_params_defaults(omnis_params_t *p)
     p->imu.cal_accel_std_max_g     = 0.02f;
     p->imu.cal_accel_tol_g         = 0.10f;
     p->imu.flat_tilt_fault_rad     = 0.7853982f;   /* 45 deg */
+
+    /* --- Radio -----------------------------------------------------------
+     * 420000 baud is the ExpressLRS CRSF default. The 4% deadzone absorbs
+     * gimbal centring error; arming requires all sticks within 10% so a
+     * non-centring throttle stick left at the bottom cannot arm the robot into
+     * full reverse. LQ floor off by default: the frame timeout is the primary
+     * link-loss detector, and a floor that is too high disarms on a fringe link.
+     * ------------------------------------------------------------------- */
+    p->rc.crsf_baud        = 420000u;
+    p->rc.stick_deadzone   = 0.04f;
+    p->rc.center_tolerance = 0.10f;
+    p->rc.pin_probe_ms     = 1500u;
+    p->rc.min_link_quality = 0u;
+
+    /* §9f control block. Start on LOW for every first test. */
+    p->control.speed_low  = 0.3f;
+    p->control.speed_med  = 0.6f;
+    p->control.speed_high = 1.0f;
 
     /* --- RC link loss (§7f) ---------------------------------------------
      * 250 ms is comfortably longer than the slowest ExpressLRS packet interval
@@ -162,9 +188,21 @@ bool omnis_params_valid(const omnis_params_t *p)
     }
 
     /* Channel numbers are 1-based into a 16-channel CRSF frame. */
-    const uint8_t ch[] = { p->channel_map.throttle, p->channel_map.pitch,
-                           p->channel_map.roll,     p->channel_map.yaw,
-                           p->channel_map.kill_switch };
+    if (p->rc.crsf_baud == 0u || !(p->rc.stick_deadzone >= 0.0f) ||
+        p->rc.stick_deadzone >= 0.5f || !(p->rc.center_tolerance > 0.0f) ||
+        p->rc.center_tolerance >= 1.0f) {
+        return false;
+    }
+    if (!(p->control.speed_low > 0.0f) || p->control.speed_low > 1.0f ||
+        !(p->control.speed_med > 0.0f) || p->control.speed_med > 1.0f ||
+        !(p->control.speed_high > 0.0f) || p->control.speed_high > 1.0f) {
+        return false;
+    }
+
+    const uint8_t ch[] = { p->channel_map.throttle,    p->channel_map.pitch,
+                           p->channel_map.roll,        p->channel_map.yaw,
+                           p->channel_map.kill_switch, p->channel_map.drive_mode,
+                           p->channel_map.speed_limiter, p->channel_map.tune_pot };
     for (size_t i = 0; i < sizeof(ch) / sizeof(ch[0]); ++i) {
         if (ch[i] < 1u || ch[i] > 16u) {
             return false;
