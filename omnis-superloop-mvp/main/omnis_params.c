@@ -90,6 +90,32 @@ void omnis_params_defaults(omnis_params_t *p)
     p->balance.lean_limit_rad = 0.10472f;   /* 6 degrees */
     p->balance.vel_bias_gain  = 0.0f;
 
+    /* --- IMU -------------------------------------------------------------
+     * disagree 15 deg: omnis-info.md §11c.
+     * comm_fail 25 reads: 50 ms at 500 Hz. Long enough to ride out a single
+     *   bus glitch, short enough that a dead IMU is caught within a few of the
+     *   balance loop's own time constants.
+     * frozen 50 reads: a live MPU6050's noise floor changes the 14-byte burst
+     *   every sample; 100 ms of identical bytes is a latched or dead part. On
+     *   board Rev 2.0 the shared INT line cannot reveal a dead IMU, so this and
+     *   the error count are the only way to notice one.
+     * cal 1000 samples = 2 s: §12 asks for ~5 s; 2 s already averages the gyro
+     *   noise down ~30x, and a shorter wait is more likely to actually be still.
+     * gyro sd 0.02 rad/s (~1.1 deg/s): ~20x the MPU6050 noise floor, so it
+     *   passes on a table and fails when the robot is being handled.
+     * flat tilt 45 deg: an armed robot in 4-wheel mode tipped this far has
+     *   crashed, flipped, or is being picked up. Stop stepping.
+     * ------------------------------------------------------------------- */
+    p->imu.disagree_thresh_rad     = 0.2617994f;   /* 15 deg */
+    p->imu.comm_fail_reads         = 25u;
+    p->imu.frozen_reads            = 50u;
+    p->imu.cal_samples             = 1000u;
+    p->imu.cal_attempts            = 5u;
+    p->imu.cal_gyro_std_max_radps  = 0.02f;
+    p->imu.cal_accel_std_max_g     = 0.02f;
+    p->imu.cal_accel_tol_g         = 0.10f;
+    p->imu.flat_tilt_fault_rad     = 0.7853982f;   /* 45 deg */
+
     /* --- RC link loss (§7f) ---------------------------------------------
      * 250 ms is comfortably longer than the slowest ExpressLRS packet interval
      * (50 Hz = 20 ms), so a few dropped frames do not fire it, but short enough
@@ -125,6 +151,13 @@ bool omnis_params_valid(const omnis_params_t *p)
         return false;
     }
     if (p->rc_timeout_us == 0u) {
+        return false;
+    }
+
+    if (!(p->imu.disagree_thresh_rad > 0.0f) || p->imu.cal_samples < 50u ||
+        p->imu.cal_attempts == 0u || p->imu.comm_fail_reads == 0u ||
+        p->imu.frozen_reads == 0u || !(p->imu.cal_gyro_std_max_radps > 0.0f) ||
+        !(p->imu.flat_tilt_fault_rad > 0.0f)) {
         return false;
     }
 

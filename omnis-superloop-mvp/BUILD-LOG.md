@@ -465,3 +465,90 @@ rotation-invariant, so needs no change), README ("four things that will bite"),
 the walkthrough's integration example, and master omnis-info.md §11c.
 
 **Host tests:** `assets/control` 76 → **97** assertions (Case 13 added), 0 fail.
+
+---
+
+## 2026-09-15 — Stage 3: MPU6050 driver, IMU orchestration, EKF + fusion ported
+
+**Built:**
+
+| File | What it does |
+|---|---|
+| `main/mpu6050_regs.h` | Register map, config values, pure 14-byte burst decoder (host-tested) |
+| `main/mpu6050.{c,h}` | I2C transport on the v6 `i2c_master` API; health counters |
+| `main/imu.{c,h}` | Both IMUs: bus bring-up, boot calibration, per-tick fusion, frame switching, mount wizard |
+| `main/omnis_time.h` | Busy-wait delay for boot only — no `vTaskDelay` exists in this build |
+| `main/omnis_config.h` | Build-time switches: tick rate, I2C speed, alternate reads, mount wizard |
+| `main/{attitude_ekf,imu_fusion,pid}.{c,h}`, `omnis_imu_mounting.h` | **Byte-identical** to `assets/control/` (checked with `cmp`) |
+| `test/test_mpu6050.c` | 28 assertions: decoding, sign extension, full scale, plausibility, identity |
+| `test/test_control.c` | The asset suite, 97 assertions, now run against the firmware copies |
+| `test/run_host_tests.sh` | Rewritten to run every suite and fail if any one fails |
+
+**Result:** target build clean, zero warnings, 189 KB (82% of the partition
+free). Host tests: **3 suites, 201 assertions, 0 failures.** No hardware yet — the
+board is not assembled.
+
+### Design decisions and why
+
+**`INT_PIN_CFG` is the first register written after reset.** Board Rev 2.0 ties
+both INT pins to GPIO7. The part powers up push-pull; making it open-drain before
+anything else shortens the window in which two push-pull outputs share a wire. The
+window is benign anyway (interrupt disabled, both idle at the same level), but
+there is no reason to hold it open. The interrupt stays disabled; the tick polls.
+
+**Every configuration write is read back.** Catches a failed write, a wrong
+address, and a second device answering in place of the intended one — all of which
+otherwise produce an IMU that "works" with the wrong full-scale range, i.e. angles
+that are wrong by a factor.
+
+**MPU6500-family parts are accepted.** GY-521 boards very often carry an MPU6500
+(WHO_AM_I 0x70) instead of a genuine MPU6050 (0x68). Every register used here has
+the same address and meaning, so rejecting them would reject most parts actually
+sold. Logged as a warning. Only the temperature formula differs, and temperature is
+diagnostic.
+
+**A dead IMU is detected from I2C behaviour, not the interrupt.** With a shared
+INT line the pin cannot say which IMU fired. So `mpu6050_read()` counts
+consecutive errors *and* consecutive byte-identical bursts: a live sensor's noise
+floor changes the 14 bytes every sample, so 50 identical bursts (100 ms) is a
+latched part. Implausible bursts (all 0x00 or all 0xFF) are rejected outright —
+gravity makes an all-zero accelerometer impossible.
+
+**Data path order is fixed:** decode → sensor mount → subtract bias → balance
+frame (only while balancing) → EKF. The mount must precede the EKF or the
+antiparallel IMUs read 20° apart. Bias is subtracted in the body frame, so a later
+frame change never has to rotate a bias state — `imu_set_frame()` just re-seeds
+the filters from the last accelerometer sample.
+
+**Measured dt, not the nominal period.** Correct after an overrun, correct when a
+read fails for a few ticks (the next good read integrates across the gap), and
+correct when `OMNIS_IMU_READ_ALTERNATE` halves each IMU's rate. Clamped to 50 ms so
+a long stall cannot integrate a wild angle in one step.
+
+**Calibration gates on stillness, and fails rather than guessing.** 2 s of
+samples per attempt, up to 5 attempts. Rejected if gyro std-dev exceeds 0.02 rad/s
+(~20× the noise floor), if |a| std-dev exceeds 0.02 g, or if mean |a| is not within
+0.1 g of 1 g — that last one is not a motion problem but a wrong full-scale setting
+or failing part. A bias measured while someone was holding the robot would bake a
+drift into every later angle.
+
+**Mount wizard instead of arrow-reading.** `OMNIS_RUN_MOUNT_WIZARD 1` boots into a
+timed two-pose procedure that runs `imu_mount_resolve()` on raw sensor data and
+prints `#define` lines to paste, flagging any that differ from the header. It
+matters more on Rev 2.0: the IMU placement is not confirmed on the new board.
+
+**Escape hatch for I2C cost.** Two 1+14-byte transactions at 400 kHz are
+estimated at a few hundred µs plus driver overhead, but the v6 `i2c_master` driver's
+real per-transaction cost is unmeasured. `OMNIS_IMU_READ_ALTERNATE` reads one IMU
+per tick, halving it, with no other change needed because every consumer uses
+measured dt.
+
+### Known limitations
+
+- **I2C time on the real bus is unmeasured.** The status line reports the worst
+  tick (`i2c NNN us`) so the first bench run settles it.
+- **Stage 3 halts on IMU init or calibration failure.** Stage 6 turns both into
+  latched faults that block arming while the radio and buzzer keep working.
+- The drive pipeline still runs on synthetic sticks; nothing drives a motor yet.
+- The IMU mounting constants are still those confirmed on the Rev 1 board photo.
+  Rev 2.0 placement must be confirmed with the wizard.

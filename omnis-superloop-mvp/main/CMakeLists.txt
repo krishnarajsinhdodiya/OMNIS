@@ -5,9 +5,16 @@ idf_component_register(
         "omnis_params.c"
         "mecanum_kinematics.c"
         "drive.c"
+        "mpu6050.c"
+        "imu.c"
+        "attitude_ekf.c"
+        "imu_fusion.c"
+        "pid.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio
         esp_driver_gptimer
         esp_timer
+        esp_driver_i2c
+        esp_rom
 )

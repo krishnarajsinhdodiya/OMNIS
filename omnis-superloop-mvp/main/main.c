@@ -23,7 +23,9 @@
 #include "esp_timer.h"
 
 #include "drive.h"
+#include "imu.h"
 #include "mecanum_kinematics.h"
+#include "omnis_config.h"
 #include "omnis_pins.h"
 #include "omnis_params.h"
 #include "tick.h"
@@ -228,6 +230,23 @@ void app_main(void)
         while (1) { /* halt, motors off */ }
     }
 
+    /* 4. Both IMUs. Stage 3 halts on failure; Stage 6 turns this into a latched
+     *    fault that blocks arming instead, so the radio and buzzer keep working
+     *    and the reason is reported. */
+    if (!imu_init(params)) {
+        ESP_LOGE(TAG, "IMU INIT FAILED - check I2C wiring and both 0x68/0x69");
+        while (1) { /* halt, STEP lines low */ }
+    }
+
+#if OMNIS_RUN_MOUNT_WIZARD
+    imu_run_mount_wizard();   /* never returns */
+#endif
+
+    if (!imu_calibrate(params, NULL)) {
+        ESP_LOGE(TAG, "IMU CALIBRATION FAILED - keep the robot still at power-on");
+        while (1) { /* halt, STEP lines low */ }
+    }
+
     ESP_LOGI(TAG, "entering superloop");
 
     /* --- Loop-health statistics ------------------------------------------
@@ -251,6 +270,12 @@ void app_main(void)
     uint32_t window_deadbanded = 0;
     float    worst_null        = 0.0f;
 
+    /* Stage 3 IMU health, accumulated over the window. */
+    imu_state_t imu;
+    uint32_t    window_i2c_max_us = 0;
+    uint32_t    window_imu_invalid = 0;
+    float       worst_disagree    = 0.0f;
+
     drive_solution_zero(&sol);
 
     while (1) {
@@ -261,6 +286,12 @@ void app_main(void)
         const int64_t now = esp_timer_get_time();
         const uint32_t period_us = (uint32_t)(now - last_tick_us);
         last_tick_us = now;
+
+        /* ---- Stage 3: read, filter and fuse both IMUs ---- */
+        imu_update(now, &imu);
+        if (imu.read_us > window_i2c_max_us) window_i2c_max_us = imu.read_us;
+        if (!imu.valid)                      ++window_imu_invalid;
+        if (imu.disagreement > worst_disagree) worst_disagree = imu.disagreement;
 
         /* ---- Stage 2: exercise the full drive pipeline every tick ----
          * Synthetic stick input tracing a slow circle in (vx, vy) with a bit of
@@ -321,15 +352,22 @@ void app_main(void)
             const double measured_hz =
                 (double)(window_ticks - 1u) * 1e6 / (double)elapsed_us;
 
+            /* One line, deliberately: every log line costs milliseconds, and
+             * this report sits outside the measurement window for that reason. */
             ESP_LOGI(TAG,
-                     "%.2f Hz | period %" PRIu32 "-%" PRIu32 " us "
-                     "| body %" PRIu32 " us | overruns %" PRIu32
-                     " | clamp %" PRIu32 " dead %" PRIu32 " null %.4f"
-                     " | up %" PRId64 " s",
-                     measured_hz, min_period_us, max_period_us,
-                     (uint32_t)(TICK_PERIOD_US - min_headroom), overruns,
-                     window_clamped, window_deadbanded, (double)worst_null,
-                     now / 1000000);
+                     "%.2f Hz | body %" PRIu32 " us ovr %" PRIu32
+                     " | imu r %+.1f p %+.1f dis %.2f i2c %" PRIu32 " us bad %" PRIu32
+                     "%s%s | clamp %" PRIu32 " null %.4f | up %" PRId64 " s",
+                     measured_hz, (uint32_t)(TICK_PERIOD_US - min_headroom), overruns,
+                     (double)(imu.roll * 57.29578f), (double)(imu.pitch * 57.29578f),
+                     (double)(worst_disagree * 57.29578f), window_i2c_max_us,
+                     window_imu_invalid,
+                     imu.fault_comm ? " COMM-FAULT" : "",
+                     imu.fault_disagree ? " DISAGREE-FAULT" : "",
+                     window_clamped, (double)worst_null, now / 1000000);
+            (void)min_period_us;
+            (void)max_period_us;
+            (void)window_deadbanded;
 
             window_ticks  = 0;
             /* window_start is re-anchored on the next tick edge, above.
@@ -342,6 +380,9 @@ void app_main(void)
             window_clamped    = 0;
             window_deadbanded = 0;
             worst_null        = 0.0f;
+            window_i2c_max_us = 0;
+            window_imu_invalid = 0;
+            worst_disagree    = 0.0f;
             g_tick_overruns   = 0;
         }
     }

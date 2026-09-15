@@ -80,6 +80,19 @@ typedef struct {
     float vel_bias_gain;
 } omnis_balance_t;
 
+/** IMU health, calibration and attitude-fault limits (omnis-info.md §11c, §12). */
+typedef struct {
+    float    disagree_thresh_rad;     /**< §11c: IMUs disagreeing past this = fault  */
+    uint16_t comm_fail_reads;         /**< consecutive failed reads -> comm fault    */
+    uint16_t frozen_reads;            /**< consecutive identical bursts -> comm fault */
+    uint16_t cal_samples;             /**< boot gyro-bias samples (one per tick)     */
+    uint8_t  cal_attempts;            /**< retries if the robot is moved             */
+    float    cal_gyro_std_max_radps;  /**< stillness gate: gyro std-dev per axis     */
+    float    cal_accel_std_max_g;     /**< stillness gate: |a| std-dev               */
+    float    cal_accel_tol_g;         /**< |mean |a| - 1 g| must be under this        */
+    float    flat_tilt_fault_rad;     /**< armed in flat mode and tipped past this   */
+} omnis_imu_params_t;
+
 /** Everything, in one place. */
 typedef struct {
     uint32_t             schema_version;
@@ -88,6 +101,7 @@ typedef struct {
     omnis_channel_map_t  channel_map;
     omnis_step_limits_t  step;
     omnis_balance_t      balance;
+    omnis_imu_params_t   imu;
     uint32_t             rc_timeout_us;   /**< link-loss threshold (§7f) */
 } omnis_params_t;
 

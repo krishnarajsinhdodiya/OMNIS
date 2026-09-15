@@ -28,11 +28,14 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "omnis_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define TICK_RATE_HZ        500u
+/* Single source of truth for the rate: omnis_config.h. */
+#define TICK_RATE_HZ        OMNIS_TICK_RATE_HZ
 #define TICK_PERIOD_US      (1000000u / TICK_RATE_HZ)   /* 2000 us */
 #define TICK_PERIOD_S       (1.0f / (float)TICK_RATE_HZ) /* 0.002 s */
 
