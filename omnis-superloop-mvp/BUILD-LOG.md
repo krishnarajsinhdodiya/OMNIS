@@ -635,3 +635,114 @@ ready.
   both pins are inputs — and it stops at the first valid frame.
 - Nothing drives a motor yet: `sol.rates` is computed from real sticks and discarded
   until Stage 5.
+
+---
+
+## 2026-09-15 — Stage 5: RMT step generation, acceleration limit, bench pattern
+
+**Built:**
+
+| File | What it does |
+|---|---|
+| `main/step_wave.{c,h}` | Pure STEP waveform generator: rate in, RMT-style symbols out |
+| `main/step_gen.{c,h}` | Four RMT TX channels, burst re-arm, exact queue regulation, DIR state machine |
+| `main/drive.{c,h}` | + `drive_slew_rates()`: acceleration limit by a common factor |
+| `main/omnis_params.*` | `motor` block: per-wheel DIR invert, pulse width, minimum low time |
+| `main/omnis_config.h` | `OMNIS_BENCH_STEP_TEST` — fixed motion pattern, no radio, wheels off the ground |
+| `main/main.c` | Step generation initialised straight after parameters; bench-gated drive path |
+| `sdkconfig.defaults` | RMT done-callback and copy encoder in IRAM |
+| `test/test_step_wave.c` | 87 assertions on the reconstructed waveform |
+| `test/test_kinematics.c` | + 13 slew-limiter assertions (89 total) |
+
+**Result:** normal build clean, zero warnings, 236 KB; bench variant
+(`OMNIS_BENCH_STEP_TEST 1`) also clean, 240 KB. Every sdkconfig option confirmed
+in the regenerated file. Host tests: **5 suites, 356 assertions, 0 failures.**
+In a normal build the motors still never step — the supervisor that arms them is
+Stage 6/7.
+
+### Design decisions and why
+
+**Chunks, queued with EXACT regulation.** Each tick, each wheel keeps three
+~2 ms bursts queued. "Pending" is not estimated from timing: it is `submitted`
+(superloop) minus `completed` (incremented in the RMT done-callback, the module's
+only ISR). So the generator can never over-fill the driver's queue, and a late
+tick is absorbed by the ~6 ms lead and topped up on the next one.
+
+**Payload buffers outlive their transactions.** `rmt_transmit()` does not copy:
+the copy encoder reads the buffer from the ISR while it plays. Each wheel owns a
+ring of 8 buffers against a queue depth of 6, so a slot is never rewritten while
+queued. A failed submit does not advance the ring or commit the waveform phase —
+that chunk is simply regenerated next tick. One encoder per channel, because an
+encoder holds per-transaction state.
+
+**Stopping overwrites queued payloads instead of calling `rmt_disable()`.** Read
+from the installed IDF's `rmt_tx.c`: `rmt_tx_disable()` recycles only the
+transaction in progress, without a done callback, and leaves everything else
+queued to play after the next enable — steps after a stop, plus a pending count
+that never drains. Instead `step_gen_stop()` clears the level bits of every queued
+burst in place. The ISR only ever reads those words, so the rewrite is race-free;
+queued bursts play as silence and the counters stay consistent. At most the burst
+already copied into RMT memory — one tick — still plays.
+
+**Direction reversal drains before touching DIR.** Queued bursts were generated
+for the old direction; flipping DIR while they play sends those steps the wrong
+way. A reversal stops queueing, waits for the queue to empty, writes DIR, holds a
+full tick (2 ms against the A4988's 200 ns setup), then resumes.
+
+**Waveform guarantees, each tested on a reconstructed timeline across chunk
+boundaries:** a pulse is never split and every chunk ends LOW (the output idles
+low between transactions, so a split pulse becomes two steps and a high-ended
+chunk can merge two into one); every pulse is exactly 10 µs and every gap at least
+10 µs, including through 20 s of random rate changes; no zero-duration halves
+(RMT reads zero as end-of-transmission).
+
+**The rounding residue is carried.** Edges land on whole microseconds, but the
+error is fed back into the phase. Verified over 10 s at 3395.305 steps/s (Case A):
+within 1.5 pulses of exact. Rounding each edge independently would have lost ~55
+steps.
+
+**Phase is a fraction of the period.** Speeding up from a crawl does not wait out
+the old period: after one chunk at 20 steps/s, the first pulse at 7000 steps/s
+came at **137 µs**, not ~48 ms later.
+
+**Acceleration is limited by a common factor.** Slewing each wheel separately
+lets small changes arrive before large ones, warping the motion vector mid-change
+exactly as per-wheel clipping does. With one factor, every intermediate command
+lies on the straight line between old and new motion. Verified: mid-transition
+`vy/vx` and `w/vx` hold the target ratios to 1e-4 and the null space stays empty.
+A non-positive limit freezes the wheels rather than meaning "unlimited".
+
+### Bug found by the tests
+
+**At high rates the symbol buffer, not the clock, ended each chunk.** The first
+waveform run failed 2 of 77 checks: at 50 000 steps/s a 64-symbol chunk lasted
+~1.26 ms instead of 2 ms. Every pulse guarantee still held and the average rate was
+still exact — but short chunks quietly erode the queue lead the generator relies
+on, and nothing stopped the firmware being configured into that regime. Added
+`step_wave_max_full_chunk_rate()` (30 000 steps/s for 64 symbols), made
+`step_gen_init()` refuse a `max_step_rate` above it, and corrected the test to
+demand full-length chunks only below that limit while still checking every other
+guarantee above it. The configured 7000 steps/s is far inside.
+
+### A mistake during verification, recorded so it is not repeated
+
+Checking that the bench variant compiles meant flipping `OMNIS_BENCH_STEP_TEST` to
+1, building into a scratch directory, and restoring the header. In zsh, `status` is
+a read-only special variable: `status=$?` aborted the rest of the command line, so
+**the restore never ran and the header was left enabling the bench pattern.** It
+was caught on the next step, before any commit or flash, and restored and verified.
+Two lessons: never name a shell variable `status` here, and a restore must not sit
+behind commands that can fail.
+
+### Known limitations
+
+- **RMT inter-transaction gap is unmeasured.** Between bursts the output idles low
+  for the ISR's hand-over latency, probably tens of µs per 2 ms burst — roughly a
+  1% lower effective rate. Harmless to pulse integrity; measure with a logic
+  analyser.
+- **Reversal dead time is up to ~8 ms** (drain + settle). Irrelevant for driving;
+  it matters for balancing, where wheel speed crosses zero often.
+- **`dir_invert` defaults (right side inverted) are unverified.** The bench
+  pattern's FORWARD segment settles them wheel by wheel.
+- `max_accel_steps_s2 = 20000` remains a placeholder until the A4988 current limits
+  are set.

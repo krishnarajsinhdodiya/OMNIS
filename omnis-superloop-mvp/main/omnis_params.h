@@ -115,6 +115,18 @@ typedef struct {
     float speed_high;
 } omnis_control_t;
 
+/** A4988 STEP/DIR electrical settings (Stage 5). */
+typedef struct {
+    /* Per-wheel DIR polarity, ordered [FL, FR, RL, RR]. The kinematics' +omega is
+     * "the sense that drives the robot forward", and the left and right motors
+     * are mirror images across the chassis, so the same wheel direction needs
+     * opposite shaft rotation on each side. Fix a backwards wheel HERE — never by
+     * flipping a sign in the IK (kinematics reference §6). */
+    bool     dir_invert[4];
+    uint16_t step_pulse_us;      /**< STEP high time. A4988 minimum is 1 us.  */
+    uint16_t step_min_low_us;    /**< STEP low-time floor between pulses.     */
+} omnis_motor_t;
+
 /** Everything, in one place. */
 typedef struct {
     uint32_t             schema_version;
@@ -126,6 +138,7 @@ typedef struct {
     omnis_imu_params_t   imu;
     omnis_rc_params_t    rc;
     omnis_control_t      control;
+    omnis_motor_t        motor;
     uint32_t             rc_timeout_us;   /**< link-loss threshold (§7f) */
 } omnis_params_t;
 

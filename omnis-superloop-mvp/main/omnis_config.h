@@ -41,4 +41,17 @@
  * ------------------------------------------------------------------------ */
 #define OMNIS_RUN_MOUNT_WIZARD          0
 
+/* --- Stage 5 bench pattern ----------------------------------------------
+ * 1: ignore the radio and cycle a fixed sequence of slow motions through the
+ *    real drive pipeline and RMT step generation — forward, back, strafe left,
+ *    rotate CCW, and the vx = vy diagonal that must leave FL and RR still.
+ *
+ *    WHEELS OFF THE GROUND. Board Rev 2.0 has no driver enable: the pattern
+ *    starts about 3 s after boot whether or not anyone is watching.
+ *    See TESTING.md, Stage 5.
+ *
+ * 0: normal operation. Motors step only when the supervisor arms them.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_BENCH_STEP_TEST           0
+
 #endif /* OMNIS_CONFIG_H */

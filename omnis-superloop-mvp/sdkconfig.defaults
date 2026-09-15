@@ -61,3 +61,11 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # If the monitor shows garbage, drop this to 115200 — nothing depends on it.
 CONFIG_ESP_CONSOLE_UART_CUSTOM=y
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=460800
+
+# --- RMT step generation ----------------------------------------------------
+# The RMT done-callback (counts completed chunks for queue regulation) and the
+# copy encoder (feeds each queued chunk into RMT memory) run in ISR context.
+# Kept in IRAM so their latency does not depend on flash-cache state — the
+# hand-over between chunks is part of every STEP pulse's timing.
+CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM=y
+CONFIG_RMT_ENCODER_FUNC_IN_IRAM=y

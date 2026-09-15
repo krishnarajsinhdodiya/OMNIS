@@ -13,6 +13,8 @@ idf_component_register(
         "crsf_parser.c"
         "rc_input.c"
         "crsf.c"
+        "step_wave.c"
+        "step_gen.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio
@@ -20,5 +22,6 @@ idf_component_register(
         esp_timer
         esp_driver_i2c
         esp_driver_uart
+        esp_driver_rmt
         esp_rom
 )

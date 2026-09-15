@@ -290,6 +290,52 @@ static void case_pipeline(void)
              sol.rates.rl == 0.0f && sol.rates.rr == 0.0f);
 }
 
+
+static void case_slew(void)
+{
+    puts("\ndrive_slew_rates - acceleration limit by COMMON factor");
+    const wheel_rates_t target = mecanum_inverse(200.0f, 100.0f, 0.5f, R, L, W); /* Case D */
+    wheel_rates_t cur = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    bool limited = drive_slew_rates(&cur, &target, 1000.0f);
+    chk_true("first step from rest is limited", limited);
+    chk("largest change (FR) is exactly the limit", fabsf(cur.fr), 1000.0, 1e-2);
+    const float s = cur.fr / target.fr;
+    chk("FL moved by the same fraction", cur.fl / target.fl, s, 1e-5);
+    chk("RL moved by the same fraction", cur.rl / target.rl, s, 1e-5);
+    chk("RR moved by the same fraction", cur.rr / target.rr, s, 1e-5);
+    chk("null space stays empty mid-transition", mecanum_null_space(&cur), 0.0, 1e-2);
+
+    const body_vel_t mid = mecanum_forward(&cur, R, L, W);
+    chk("mid-transition vy/vx keeps the target direction (0.5)", mid.vy / mid.vx, 0.5, 1e-4);
+    chk("mid-transition w/vx keeps the target ratio (0.0025)", mid.w / mid.vx, 0.0025, 1e-6);
+
+    int steps = 1;
+    while (drive_slew_rates(&cur, &target, 1000.0f)) {
+        ++steps;
+        if (steps > 50) break;
+    }
+    chk("reaches the target in ceil(7015.55/1000) = 8 calls", steps + 1, 8, 0);
+    chk_true("  ... and lands on it exactly",
+             cur.fl == target.fl && cur.fr == target.fr &&
+             cur.rl == target.rl && cur.rr == target.rr);
+
+    wheel_rates_t near = target;
+    near.fr += 10.0f;
+    chk_true("a change inside the limit is applied in one step",
+             !drive_slew_rates(&near, &target, 1000.0f) && near.fr == target.fr);
+
+    wheel_rates_t nan_t = { NAN, NAN, NAN, NAN };
+    wheel_rates_t z = { 5.0f, -5.0f, 5.0f, -5.0f };
+    drive_slew_rates(&z, &nan_t, 1000.0f);
+    chk_true("NaN target is treated as stop", z.fl == 0.0f && z.fr == 0.0f);
+
+    wheel_rates_t frozen = { 100.0f, 100.0f, 100.0f, 100.0f };
+    drive_slew_rates(&frozen, &target, 0.0f);
+    chk_true("non-positive limit freezes instead of meaning unlimited",
+             frozen.fl == 100.0f && frozen.fr == 100.0f);
+}
+
 int main(void)
 {
     puts("OMNIS kinematics + drive pipeline verification");
@@ -302,6 +348,7 @@ int main(void)
     case_deadband();
     case_rc_mapping();
     case_pipeline();
+    case_slew();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return (g_fail == 0) ? 0 : 1;

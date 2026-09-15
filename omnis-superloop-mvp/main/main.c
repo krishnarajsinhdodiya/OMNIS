@@ -30,9 +30,15 @@
 #include "omnis_pins.h"
 #include "omnis_params.h"
 #include "rc_input.h"
+#include "step_gen.h"
 #include "tick.h"
 
 static const char *TAG = "omnis";
+
+/* The rates actually handed to the step generator: the drive pipeline's output
+ * after the acceleration limit. Kept across ticks because the slew limiter works
+ * from where the wheels ARE, not from where they were asked to be. */
+static wheel_rates_t s_cmd_rates = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 /* ------------------------------------------------------------------------
  * Bring every output to a safe, known state.
@@ -196,6 +202,50 @@ static void benchmark_drive(const omnis_params_t *p)
              ns, ns / 10.0 / 2000.0);
 }
 
+#if OMNIS_BENCH_STEP_TEST
+/* ------------------------------------------------------------------------
+ * Stage 5 bench pattern. WHEELS OFF THE GROUND — see omnis_config.h.
+ *
+ * Each segment runs a body velocity through the real pipeline (IK, clamp,
+ * deadband) so the bench exercises exactly what driving will. The expected
+ * wheel behaviour is in the segment name and in TESTING.md.
+ * ------------------------------------------------------------------------ */
+static void bench_pattern(int64_t now_us, const omnis_params_t *p,
+                          drive_solution_t *sol)
+{
+    typedef struct {
+        const char *name;
+        float       vx, vy, w;
+        uint32_t    ms;
+    } bench_seg_t;
+
+    static const bench_seg_t segs[] = {
+        { "stop (settle)",                                          0.0f,   0.0f, 0.0f, 3000u },
+        { "FORWARD 200 mm/s - all four wheels forward, ~3395 Hz",  200.0f,  0.0f, 0.0f, 3000u },
+        { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
+        { "BACKWARD 200 mm/s - all four wheels backward",         -200.0f,  0.0f, 0.0f, 3000u },
+        { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
+        { "STRAFE LEFT 200 mm/s - FL,RR backward; FR,RL forward",    0.0f, 200.0f, 0.0f, 3000u },
+        { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
+        { "ROTATE CCW 1 rad/s - FL,RL backward; FR,RR forward",      0.0f,   0.0f, 1.0f, 3000u },
+        { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
+        { "DIAGONAL vx=vy=150 - FR,RL forward; FL,RR MUST NOT TURN", 150.0f, 150.0f, 0.0f, 3000u },
+    };
+    static int     idx       = -1;
+    static int64_t seg_start = 0;
+    const int      count     = (int)(sizeof segs / sizeof segs[0]);
+
+    if (idx < 0 || now_us - seg_start >= (int64_t)segs[idx].ms * 1000) {
+        idx       = (idx + 1) % count;
+        seg_start = now_us;
+        ESP_LOGW(TAG, "BENCH %d/%d: %s", idx + 1, count, segs[idx].name);
+    }
+
+    const body_vel_t v = { segs[idx].vx, segs[idx].vy, segs[idx].w };
+    drive_solve(&v, &p->geometry, &p->step, sol);
+}
+#endif
+
 /* Serviced once per tick while the boot-time IMU calibration holds the loop,
  * so the radio link is already found and locked by the time it finishes. */
 static void boot_tick_hook(void)
@@ -223,6 +273,19 @@ void app_main(void)
         while (1) { /* halt, motors off */ }
     }
     log_params(params);
+
+    /* 2a. Step generation. Right after parameters, because board Rev 2.0's
+     *     drivers are live whenever 12 V is present: the sooner RMT owns the STEP
+     *     lines (initialised low), the shorter the window in which anything else
+     *     could drive them. */
+    if (!step_gen_init(params)) {
+        ESP_LOGE(TAG, "STEP GENERATION INIT FAILED - refusing to run");
+        while (1) { /* halt, STEP lines low */ }
+    }
+#if OMNIS_BENCH_STEP_TEST
+    ESP_LOGW(TAG, "*** OMNIS_BENCH_STEP_TEST = 1: WHEELS WILL TURN ~3 s AFTER BOOT. "
+                  "WHEELS OFF THE GROUND. ***");
+#endif
 
     /* 2b. Kinematics: prove the ported module behaves on this FPU before the
      *     loop starts depending on it. */
@@ -336,6 +399,28 @@ void app_main(void)
         };
         drive_from_sticks(&sticks, params, &sol);
 
+        /* ---- Stage 5: acceleration limit, then STEP pulses ----
+         * Motors step only when something has explicitly enabled them. Until the
+         * supervisor exists (Stage 6/7) that is the bench pattern alone; in a
+         * normal build the step generator is held stopped. */
+#if OMNIS_BENCH_STEP_TEST
+        bench_pattern(now, params, &sol);
+        const bool motors_enabled = true;
+#else
+        const bool motors_enabled = false;
+#endif
+        float dt_s = (float)period_us * 1e-6f;
+        if (dt_s > 0.02f) dt_s = 0.02f;   /* a stall must not permit a huge jump */
+
+        if (motors_enabled) {
+            (void)drive_slew_rates(&s_cmd_rates, &sol.rates,
+                                   params->step.max_accel_steps_s2 * dt_s);
+            step_gen_update(&s_cmd_rates);
+        } else {
+            s_cmd_rates.fl = s_cmd_rates.fr = s_cmd_rates.rl = s_cmd_rates.rr = 0.0f;
+            step_gen_stop();
+        }
+
         if (sol.clamped)         ++window_clamped;
         if (sol.deadbanded > 0)  ++window_deadbanded;
         /* The null-space metric is taken post-clamp, pre-deadband, so on a
@@ -401,6 +486,24 @@ void app_main(void)
             (void)window_deadbanded;
             (void)window_clamped;
             (void)worst_null;
+#if OMNIS_BENCH_STEP_TEST
+            {
+                uint32_t und = 0, fail = 0, rev = 0;
+                uint64_t pulses = 0;
+                for (int wh = 0; wh < STEP_WHEELS; ++wh) {
+                    step_gen_stats_t st;
+                    step_gen_get_stats(wh, &st);
+                    und += st.underruns; fail += st.submit_failures;
+                    rev += st.reversals; pulses += st.pulses;
+                }
+                ESP_LOGI(TAG, "step: FL %+6.0f FR %+6.0f RL %+6.0f RR %+6.0f st/s | "
+                              "pulses %llu underruns %" PRIu32 " submit-fail %" PRIu32
+                              " reversals %" PRIu32,
+                         (double)s_cmd_rates.fl, (double)s_cmd_rates.fr,
+                         (double)s_cmd_rates.rl, (double)s_cmd_rates.rr,
+                         (unsigned long long)pulses, und, fail, rev);
+            }
+#endif
 
             window_ticks  = 0;
             /* window_start is re-anchored on the next tick edge, above.

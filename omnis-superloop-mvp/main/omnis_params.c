@@ -142,6 +142,23 @@ void omnis_params_defaults(omnis_params_t *p)
     p->control.speed_med  = 0.6f;
     p->control.speed_high = 1.0f;
 
+    /* --- Motors ----------------------------------------------------------
+     * dir_invert: right side inverted, on the assumption that all four motors
+     * are wired identically and mounted shaft-outward, which makes the right
+     * side mirror the left. UNVERIFIED — the Stage 5 bench pattern's "forward"
+     * segment settles it wheel by wheel (TESTING.md).
+     *
+     * 10 us pulses and 10 us minimum lows: ten times the A4988's 1 us minimum,
+     * margin for slow edges on long harnesses, and still a 50 000 steps/s
+     * ceiling against a 7000 steps/s operating limit.
+     * ------------------------------------------------------------------- */
+    p->motor.dir_invert[0]   = false;   /* FL */
+    p->motor.dir_invert[1]   = true;    /* FR */
+    p->motor.dir_invert[2]   = false;   /* RL */
+    p->motor.dir_invert[3]   = true;    /* RR */
+    p->motor.step_pulse_us   = 10u;
+    p->motor.step_min_low_us = 10u;
+
     /* --- RC link loss (§7f) ---------------------------------------------
      * 250 ms is comfortably longer than the slowest ExpressLRS packet interval
      * (50 Hz = 20 ms), so a few dropped frames do not fire it, but short enough
@@ -184,6 +201,12 @@ bool omnis_params_valid(const omnis_params_t *p)
         p->imu.cal_attempts == 0u || p->imu.comm_fail_reads == 0u ||
         p->imu.frozen_reads == 0u || !(p->imu.cal_gyro_std_max_radps > 0.0f) ||
         !(p->imu.flat_tilt_fault_rad > 0.0f)) {
+        return false;
+    }
+
+    if (p->motor.step_pulse_us < 2u || p->motor.step_pulse_us > 1000u ||
+        p->motor.step_min_low_us < 2u || !(p->step.max_accel_steps_s2 > 0.0f) ||
+        !(p->step.deadband_steps >= 0.0f)) {
         return false;
     }
 

@@ -144,3 +144,44 @@ void drive_from_sticks(const rc_sticks_t *s,
     const body_vel_t v = drive_rc_to_body(s, &p->rc_scale);
     drive_solve(&v, &p->geometry, &p->step, out);
 }
+
+static float finite_or_zero(float v)
+{
+    return isfinite(v) ? v : 0.0f;
+}
+
+bool drive_slew_rates(wheel_rates_t *current, const wheel_rates_t *target,
+                      float max_delta_steps)
+{
+    if (current == NULL || target == NULL) {
+        return false;
+    }
+    if (!(max_delta_steps > 0.0f)) {
+        return true;   /* frozen: see drive.h */
+    }
+
+    const float d_fl = finite_or_zero(target->fl) - current->fl;
+    const float d_fr = finite_or_zero(target->fr) - current->fr;
+    const float d_rl = finite_or_zero(target->rl) - current->rl;
+    const float d_rr = finite_or_zero(target->rr) - current->rr;
+
+    float peak = fabsf(d_fl);
+    if (fabsf(d_fr) > peak) peak = fabsf(d_fr);
+    if (fabsf(d_rl) > peak) peak = fabsf(d_rl);
+    if (fabsf(d_rr) > peak) peak = fabsf(d_rr);
+
+    if (peak <= max_delta_steps) {
+        current->fl += d_fl;
+        current->fr += d_fr;
+        current->rl += d_rl;
+        current->rr += d_rr;
+        return false;
+    }
+
+    const float s = max_delta_steps / peak;   /* one factor for all four */
+    current->fl += d_fl * s;
+    current->fr += d_fr * s;
+    current->rl += d_rl * s;
+    current->rr += d_rr * s;
+    return true;
+}

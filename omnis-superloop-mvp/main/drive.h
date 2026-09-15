@@ -109,6 +109,34 @@ void drive_from_sticks(const rc_sticks_t *s,
                        const omnis_params_t *p,
                        drive_solution_t *out);
 
+/**
+ * @brief Limit how fast wheel rates change, by a COMMON factor.
+ *
+ * Moves `current` toward `target` so that no wheel's rate changes by more than
+ * max_delta_steps this tick, scaling ALL FOUR changes by the same factor.
+ *
+ * Why common: slewing each wheel independently lets a wheel with a small change
+ * arrive early and a wheel with a large change arrive late, and during that
+ * transition the motion vector is warped exactly the way per-wheel clipping
+ * warps it (kinematics reference §6) — a commanded strafe would briefly arc. With
+ * a common factor every intermediate command lies on the straight line between
+ * the old motion and the new, so the robot changes speed without changing
+ * direction, and the null space stays empty.
+ *
+ * This is the §13c defence against lost steps: a stepper asked to accelerate
+ * faster than its torque allows slips silently, and there are no encoders to
+ * notice.
+ *
+ * @param current          last tick's commanded rates, updated in place
+ * @param target           what the drive pipeline wants now
+ * @param max_delta_steps  max acceleration [steps/s^2] x dt [s]. Non-positive
+ *                         freezes `current`: a mis-set limit must not mean
+ *                         "unlimited".
+ * @return true if the limit was active this tick
+ */
+bool drive_slew_rates(wheel_rates_t *current, const wheel_rates_t *target,
+                      float max_delta_steps);
+
 /** All wheels stopped, all metrics zeroed. The failsafe's drive command. */
 void drive_solution_zero(drive_solution_t *out);
 
