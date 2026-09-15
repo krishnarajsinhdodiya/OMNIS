@@ -15,6 +15,10 @@ idf_component_register(
         "crsf.c"
         "step_wave.c"
         "step_gen.c"
+        "fault.c"
+        "buzzer_pattern.c"
+        "buzzer.c"
+        "supervisor.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio

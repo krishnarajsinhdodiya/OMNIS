@@ -54,4 +54,11 @@
  * ------------------------------------------------------------------------ */
 #define OMNIS_BENCH_STEP_TEST           0
 
+/* --- Telemetry -----------------------------------------------------------
+ * One status line per second on the console. Each line blocks for a few ms of
+ * UART output; the loop's timing statistics and its overrun fault both exclude
+ * that cost (main.c), so it cannot trip a fault by itself. 0 silences it.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_TELEMETRY_ENABLED         1
+
 #endif /* OMNIS_CONFIG_H */

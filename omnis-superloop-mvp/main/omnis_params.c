@@ -159,6 +159,23 @@ void omnis_params_defaults(omnis_params_t *p)
     p->motor.step_pulse_us   = 10u;
     p->motor.step_min_low_us = 10u;
 
+    /* --- Safety / supervisor ---------------------------------------------
+     * settle 400 ms: two EKF time constants (tau = 0.198 s) after the filters
+     *   are re-seeded in the balance frame, before the balance loop may drive.
+     * upright 60 deg: "standing on a pair" — comfortably past anything a flat
+     *   robot on a ramp reaches, comfortably short of the 90 deg balance pose.
+     * arm flat 30 deg: a robot tipped further than this is being carried or is
+     *   on its side, and must not start driving four wheels.
+     * overruns 25 per 500-tick window: 5% of deadlines missed means the loop's
+     *   dt, and so the EKF and PID, can no longer be trusted. The telemetry line's
+     *   own overruns are excluded (main.c).
+     * ------------------------------------------------------------------- */
+    p->safety.balance_settle_ms     = 400u;
+    p->safety.upright_min_rad       = 1.0471976f;   /* 60 deg */
+    p->safety.arm_flat_max_tilt_rad = 0.5235988f;   /* 30 deg */
+    p->safety.overrun_window_ticks  = 500u;
+    p->safety.overrun_fault_count   = 25u;
+
     /* --- RC link loss (§7f) ---------------------------------------------
      * 250 ms is comfortably longer than the slowest ExpressLRS packet interval
      * (50 Hz = 20 ms), so a few dropped frames do not fire it, but short enough
@@ -207,6 +224,13 @@ bool omnis_params_valid(const omnis_params_t *p)
     if (p->motor.step_pulse_us < 2u || p->motor.step_pulse_us > 1000u ||
         p->motor.step_min_low_us < 2u || !(p->step.max_accel_steps_s2 > 0.0f) ||
         !(p->step.deadband_steps >= 0.0f)) {
+        return false;
+    }
+
+    if (!(p->safety.arm_flat_max_tilt_rad > 0.0f) ||
+        !(p->safety.upright_min_rad > p->safety.arm_flat_max_tilt_rad) ||
+        p->safety.upright_min_rad > 1.5708f || p->safety.overrun_window_ticks == 0u ||
+        p->safety.overrun_fault_count == 0u) {
         return false;
     }
 

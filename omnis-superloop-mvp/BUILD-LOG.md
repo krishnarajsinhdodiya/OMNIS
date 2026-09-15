@@ -746,3 +746,99 @@ behind commands that can fail.
   pattern's FORWARD segment settles them wheel by wheel.
 - `max_accel_steps_s2 = 20000` remains a placeholder until the A4988 current limits
   are set.
+
+---
+
+## 2026-09-15 — Stage 6: fault latch, buzzer, arming supervisor, integration
+
+**Built:**
+
+| File | What it does |
+|---|---|
+| `main/fault.{c,h}` | Pure fault latch with three clearing classes |
+| `main/buzzer_pattern.{c,h}` | Pure patterns + event-over-fault priority player |
+| `main/buzzer.{c,h}` | GPIO16 glue; writes the pin only on a level change |
+| `main/supervisor.{c,h}` | Pure arming state machine — the one place that decides whether STEP pulses may exist |
+| `main/main.c` | Rewritten cleanly: sense → judge → act → report, faults instead of halts |
+| `main/omnis_params.*` | `safety` block: settle time, upright/flat thresholds, overrun limits |
+| `test/test_supervisor.c` | 79 assertions |
+
+**Result:** normal build clean, zero warnings, 242 KB; bench variant also clean.
+Host tests for this commit: **6 suites, 435 assertions, 0 failures** (the Stage 7
+balance suite, 28 more, passes too and ships next).
+
+**No-RTOS compliance, checked mechanically rather than asserted.** Two scans,
+both empty: (1) source grep of `main/` for any FreeRTOS call, handle type or
+`freertos/` include; (2) the undefined symbols of the compiled `libmain.a` — which
+catches anything reaching FreeRTOS through a macro or header — contain no
+`xTask*`, `vTask*`, `xQueue*`, `xSemaphore*`, `xEventGroup*`, `xTimer*` or port
+symbols. What the firmware does import is ESP-IDF driver API (`rmt_*`, `uart_*`,
+`i2c_*`, `gptimer_*`, `gpio_*`, `esp_timer_*`), exactly the line drawn in PLAN.md §1a.
+
+### Design decisions and why
+
+**On board Rev 2.0 the supervisor is the entire safety story.** EN# is hardwired,
+so nothing else can keep a live driver from moving a wheel. Motors step only in
+`ARMED_FLAT` or `ARMED_BALANCE`; every other state calls `step_gen_stop()` every
+tick.
+
+**Three fault clearing classes, chosen by what the fault implies.** FOREVER
+(parameters, IMU init/calibration/comm/disagreement, step-generator init): the
+robot's own sensing or setup cannot be trusted and nothing done from the radio
+fixes that — reboot. UNTIL-DISARM (tilt, overrun): the hardware is fine, the
+situation was not; cleared once disarmed with the switch LOW. LIVE (radio link):
+present while down. Any active fault of any class blocks arming and forces a
+disarm.
+
+**Arming needs a LOW→HIGH edge, and the attempt consumes it, pass or fail.** So a
+switch left HIGH at power-on can never arm, a rejected arm needs a deliberate
+re-try, and — tested explicitly — the robot does not re-arm itself when a fault
+clears or the link returns with the switch still up.
+
+**Every arm check has its own rejection reason**, printed and buzzed: fault, no
+link, IMU not ready, sticks not centred, pose does not match the mode, balance gains
+zero. The first failing check is the one reported, ordered from "hardware is
+broken" to "you asked for the wrong thing".
+
+**Mode is latched at arming.** Moving the mode switch while armed does nothing —
+changing between flat and balance mid-motion is a crash. AUTO picks balance if the
+robot is tipped past 60°, flat otherwise.
+
+**Balance is refused explicitly until Stage 7 wires the controller**
+(`balance_gains_set = false`), rather than arming into a mode that does nothing.
+
+**Boot never halts on a peripheral.** A missing IMU, a failed calibration or an
+RMT failure latches a fault; the loop, buzzer and telemetry keep running so the
+problem is reported. Only invalid parameters or a tick that will not start drop to
+`fault_only_loop()`, because everything downstream divides by the parameters.
+
+**The kinematics self-check now uses the fixed REFERENCE geometry**, not the
+parameter set. It verifies the code and the FPU; editing geometry cannot fake a
+parameter fault.
+
+**Buzzer patterns are tested to be pairwise distinguishable** — the test compares
+every pattern's timeline against every other's — and a one-shot event always plays
+to completion over a fault pattern, which then restarts from its beginning so it is
+heard whole.
+
+**A dead UART must not become a log flood.** If `crsf_init()` fails, the loop never
+calls `crsf_poll()`: `uart_read_bytes()` on an uninstalled driver logs an error per
+call, which at 500 Hz would itself wreck the loop timing. The robot simply never
+has a link, and cannot arm.
+
+**Overrun fault, windowed, with the telemetry line excluded.** 25 missed deadlines
+in a 500-tick window faults an armed robot: past 5% the loop's dt, and so the EKF
+and PID, can no longer be trusted. The ticks after a log line are not counted — a
+telemetry line blocks for a few ms and must not be able to trip a fault by itself.
+
+**Link loss is a fault only once there has been a link.** Before the radio is ever
+seen, the robot just cannot arm (NO_LINK); after, losing it disarms and double-chirps.
+
+### Known limitations
+
+- The overrun window is a fixed block, so 24 overruns either side of a boundary go
+  uncounted. Adequate for catching a loop that is genuinely too slow.
+- Disarming stops the wheels immediately rather than ramping down. Correct for a kill
+  switch; mechanically abrupt at speed.
+- The motors hold current whenever 12 V is present — hardware, not firmware (EN#).
+- No battery cutoff: battery sensing is out of MVP scope.

@@ -127,6 +127,18 @@ typedef struct {
     uint16_t step_min_low_us;    /**< STEP low-time floor between pulses.     */
 } omnis_motor_t;
 
+/** Supervisor thresholds and loop-health limits (Stage 6). */
+typedef struct {
+    uint32_t balance_settle_ms;      /**< hold still after arming balance while the
+                                          re-seeded filters converge            */
+    float    upright_min_rad;        /**< |flat pitch| past this = standing on a pair */
+    float    arm_flat_max_tilt_rad;  /**< flat mode arms only with roll and pitch
+                                          under this                             */
+    uint16_t overrun_window_ticks;   /**< overrun counting window                 */
+    uint16_t overrun_fault_count;    /**< overruns in one window that fault an
+                                          armed robot                            */
+} omnis_safety_t;
+
 /** Everything, in one place. */
 typedef struct {
     uint32_t             schema_version;
@@ -139,6 +151,7 @@ typedef struct {
     omnis_rc_params_t    rc;
     omnis_control_t      control;
     omnis_motor_t        motor;
+    omnis_safety_t       safety;
     uint32_t             rc_timeout_us;   /**< link-loss threshold (§7f) */
 } omnis_params_t;
 
