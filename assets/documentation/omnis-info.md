@@ -449,6 +449,7 @@ Two independent MPU6050s (§2, diagonally opposite corners) each run their own l
 
   **Correct the mounting rotation first (§2).** The two modules are mounted antiparallel. Uncorrected, two healthy sensors read ~20° apart and this fault fires at every boot. This is the most likely reason a correct dual-IMU implementation refuses to arm — check it before suspecting the filter.
 - **"Which side is down" detection** (needed for §1's active-wheel-pair remapping): at rest (low gyro on both IMUs, accel ≈ 1g), read which body axis each IMU reports as aligned with gravity — that gives current "up," which maps to which wheel pair is grounded. Re-evaluate only at mode-entry or after a detected flip, not continuously, or it'll fight the controller mid-balance.
+- **Balance-mode estimation frame (added 2026-09-15).** The flat-frame pitch cannot be the balance lean angle: `atan2(-ax, hypot(ay,az))` is confined to ±90° and **folds** at the balance point — nose-down 85° and 95° both read 85°, so which way the robot is falling is lost. Its sign survives, so it still picks the grounded pair at arming. While balancing, the accel and gyro are rotated a further 90° about Y into a frame where the pose is level, with `+X'` toward the top face in both poses, so positive lean always means "falling forward". Constants `OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN` / `_REAR_DOWN` in `assets/control/omnis_imu_mounting.h`; full reasoning in `attitude-ekf-derivation.md` §7.
 
 ### 11d. Update rate
 

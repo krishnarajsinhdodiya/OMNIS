@@ -15,7 +15,7 @@ see [`attitude-ekf-derivation.md`](attitude-ekf-derivation.md).
 | `imu_fusion.h/.c` | ~560 | mounting + resolver, fusion, fault, side detection (§11c) |
 | `pid.h/.c` | ~330 | inner PID + outer velocity-bias loop (§13b) |
 | `omnis_imu_mounting.h` | ~120 | as-built chassis frame and mount constants (header-only) |
-| `test_control.c` | ~470 | 76 host-side assertions against verified values |
+| `test_control.c` | ~470 | 97 host-side assertions against verified values |
 | `run_host_tests.sh` | — | `cc` + run. No ESP-IDF, no hardware. |
 
 **Shared properties, by design:**
@@ -84,8 +84,10 @@ if (fused.fault) {
     return;                                   /* before any motor command */
 }
 
-/* Balance mode tips about body Y, so PITCH is the lean angle and roll is
- * gimbal-locked and ignored. See omnis_imu_mounting.h. */
+/* Balance mode: this pitch must come from filters fed through the BALANCE
+ * frame (OMNIS_IMU_BALANCE_FRAME_*), applied after the sensor mount. The
+ * flat-frame pitch folds at 90 deg and loses the lean direction - see
+ * attitude-ekf-derivation.md §7. */
 const float accel_cmd = pid_update(&balance_pid,
                                    target_lean,      /* from the outer loop */
                                    fused.pitch,
@@ -271,7 +273,7 @@ it is the most common bug in this loop.
 ./run_host_tests.sh
 ```
 
-Compiles with `-Wall -Wextra -Werror` and runs 76 assertions covering: adaptive-R
+Compiles with `-Wall -Wextra -Werror` and runs 97 assertions covering: adaptive-R
 inflation, steady-state covariance and gain, gyro-bias recovery, step response,
 inverse-covariance fusion, the disagreement metric (including the balance-mode
 gimbal-lock case), mounting remap and validation, side detection with the rest

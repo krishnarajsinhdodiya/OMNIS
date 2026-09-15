@@ -217,10 +217,17 @@ Three properties worth stating:
 
 ---
 
-## 7. The singularity, and why it is survivable
+## 7. The singularity, the fold, and why balance mode needs its own frame
+
+> **Correction (2026-09-15).** An earlier revision of this section was titled
+> "why it is survivable" and argued that pitch passes cleanly through ±90°. That
+> was wrong, and building on it would have made balance mode unstable. The pitch
+> estimate is *continuous* at 90°, but it *folds* there — and the fold destroys
+> the sign of the lean at exactly the balancing point. Found while designing the
+> balance controller, before any of it reached hardware.
 
 Euler angles have a gimbal lock. For this `roll → pitch` sequence it is at
-`pitch = ±90°`, where `cos θ = 0` and:
+`pitch = ±90°`, where `cos θ = 0`:
 
 ```
 a_y = sin(φ) * 0 = 0
@@ -231,28 +238,80 @@ a_z = cos(φ) * 0 = 0
 **OMNIS balance mode sits exactly at pitch ≈ ±90°.** This is not a corner case;
 it is the primary operating point of the feature the whole filter exists for.
 
-What saves it is the asymmetry:
+### 7.1 Roll dies — that part was always right
 
-| At pitch = 90° | Status |
-|---|---|
-| `pitch = atan2(-a_x, hypot(a_y,a_z))` = `atan2(1, 0)` = 90° | **well-defined and continuous** |
-| `roll = atan2(a_y, a_z)` = `atan2(0, 0)` | **undefined, arbitrary** |
+Two healthy IMUs at pitch ≈ 90° can report wildly different roll, so the dual-IMU
+fault check must not compare Euler angles. Verified: `(roll 30°, pitch 88°)`
+versus `(roll −30°, pitch 92°)` is a 60° roll difference but only **3.46°** of real
+disagreement about where "down" is. The fusion layer compares gravity *unit
+vectors*, which is singularity-free everywhere. See
+[`sensor-fusion-reference.md`](sensor-fusion-reference.md) §3.
 
-Pitch — the lean angle the balance controller uses — passes through cleanly
-because `atan2` handles a zero second argument exactly. Only roll dies, and
-balance mode does not read roll.
+### 7.2 Pitch folds — the part that was missed
 
-Two consequences that shape the rest of the codebase:
+```
+pitch = atan2( -a_x, sqrt(a_y² + a_z²) )
+```
 
-1. **The balance controller uses pitch as the lean angle and ignores roll.**
-2. **The dual-IMU fault check must not compare Euler angles.** Two healthy IMUs
-   at pitch ≈ 90° can report wildly different roll — it is undefined, so any
-   value is as good as any other. Verified: `(roll 30°, pitch 88°)` versus
-   `(roll −30°, pitch 92°)` is a 60° roll difference but only **3.46°** of
-   actual disagreement about where "down" is. A `|roll_A − roll_B| > 15°` test
-   false-faults there on every tick. The fusion layer compares gravity *unit
-   vectors* instead, which is singularity-free everywhere. See
-   [`sensor-fusion-reference.md`](sensor-fusion-reference.md) §3.
+The second argument is a square root, so it is **never negative**, so `pitch` is
+confined to `[−90°, +90°]`. An attitude *past* 90° cannot be represented; it
+reflects back:
+
+| Nose-down attitude | accel `(a_x, a_z)` | `pitch` reads |
+|---|---|---|
+| 85° — leaning 5° back from the front-pair balance point | `(−0.996, +0.087)` | **85.0°** |
+| 90° — upright | `(−1.000, 0.000)` | 90.0° |
+| 95° — leaning 5° forward | `(−0.996, −0.087)` | **85.0°** |
+
+Leaning 5° forward and 5° back produce **the same number**. A balance controller
+driven by it cannot tell which way the robot is falling and pushes the wrong way
+on one side of upright. The EKF is damaged too: on the far side of the fold its
+`pitch_dot = gyro_y` prediction and its accelerometer update disagree in sign, so
+the filter fights itself precisely where it is needed. Verified in
+`test_control.c` Case 13.
+
+The earlier revision said pitch is "well-defined and continuous" at 90°. Both
+words are true of the function and beside the point for the control problem.
+
+### 7.3 The fix — change frames, not formulas
+
+In balance mode, rotate the body-frame accelerometer and gyro a further 90° about
+Y **before** they reach the EKF, so the balancing pose looks *level* to the filter.
+Lean then sits near 0°, where pitch is continuous, signed and far from the fold —
+and roll is no longer gimbal-locked either.
+
+Both rotations are multiples of 90°, so each is another signed axis permutation,
+applied with the same `imu_apply_mount()` used for the sensor mounting. Both
+frames put `+X'` toward the chassis top face (the OLED side) and `+Z'` up:
+
+| Pose | Frame | Map | `+pitch'` means |
+|---|---|---|---|
+| Front pair down (nose down 90°) | `X'=+Z, Y'=+Y, Z'=−X` | `{+3,+2,−1}` | falling toward the top face |
+| Rear pair down (nose up 90°) | `X'=+Z, Y'=−Y, Z'=+X` | `{+3,−2,+1}` | falling toward the top face |
+
+Defining both around the top face gives **one sign convention for either pair**:
+positive balance-frame pitch always means "falling forward", and `gyro_y'` is
+always its rate. The cost is that `Y'` flips in the rear pose, so when balancing
+on the rear pair the robot's "left" wheel is RR and its "right" wheel is RL.
+
+Constants: `OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN` and
+`OMNIS_IMU_BALANCE_FRAME_REAR_DOWN` in `omnis_imu_mounting.h`.
+
+Verified (Case 13): in the front-down frame 95° reads **+5.0°** and 85° reads
+**−5.0°**; the same holds for the rear pair; the gyro maps to `gyro_y' = +` for a
+forward fall in both poses; and an EKF seeded at +3° follows the lean through zero
+to −3° with the correct sign.
+
+### 7.4 What the flat frame is still good for
+
+The **sign** of the flat-frame pitch survives the fold — 85° and 95° both read
++85°, and both are front-down. So the flat frame still answers "which pair is on
+the ground" (`omnis_balance_pair_from_pitch()`), which is exactly the question at
+the moment of arming, before the frame switch. It must never be used as the lean.
+
+On switching frames the EKF angle states are meaningless in the new frame, so
+both filters are **re-seeded from the accelerometer**. Gyro bias is subtracted
+before the frame change, so no bias state needs rotating.
 
 ---
 

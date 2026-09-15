@@ -171,7 +171,7 @@ filter will visibly lag real tilt; below ~0.05 s it will chase vibration.
 ## 6. Verified numbers
 
 All computed independently in Python, then re-checked against the C in
-`test_control.c` (`./run_host_tests.sh` — 67 assertions, 0 failures).
+`test_control.c` (`./run_host_tests.sh` — 97 assertions, 0 failures).
 Conditions: `dt = 0.002`, `q_angle = 5e-4`, `q_bias = 1e-7`, `R = 1e-2`.
 
 ### Case 1 — static and level, cold start
@@ -222,17 +222,23 @@ Carried forward from §11b, plus what fell out of implementation:
    measured `r` per IMU. §11b says skip for v1, and the adaptive-R gate already
    distrusts the accelerometer exactly when this error is largest.
 
-2. **Roll is meaningless at pitch ≈ ±90°.** Textbook Euler gimbal lock, and
-   OMNIS balance mode lives there. Pitch stays well-defined and continuous
-   through ±90° (`atan2` handles the hypot going to zero); roll does not. The
-   balance controller uses pitch and ignores roll, and the fusion layer compares
-   gravity *vectors* rather than Euler angles for exactly this reason. See
-   [`sensor-fusion-reference.md`](sensor-fusion-reference.md) §3.
+2. **At pitch ≈ ±90° roll is meaningless AND pitch folds.** Textbook Euler
+   gimbal lock kills roll, which is why the fusion layer compares gravity
+   *vectors* rather than Euler angles
+   ([`sensor-fusion-reference.md`](sensor-fusion-reference.md) §3). Pitch is
+   continuous there but confined to ±90°, so it reflects: see item 3. OMNIS
+   balance mode lives at exactly this attitude, so **balance mode runs the EKF in
+   a rotated frame where the balancing pose is level** —
+   [`attitude-ekf-derivation.md`](attitude-ekf-derivation.md) §7.3.
 
-3. **Pitch cannot exceed ±90°.** `atan2(-ax, hypot(ay,az))` has that range by
-   construction, so tipping past vertical reads as coming back down. Irrelevant
-   for a balancer — past 90° it has fallen — but do not reuse this filter for
-   anything that inverts.
+3. **Pitch cannot exceed ±90°, and for OMNIS that is the balance point.**
+   `atan2(-ax, hypot(ay,az))` has that range by construction, so an attitude past
+   vertical reflects back: nose-down 95° reads 85°, the same as 85°. *An earlier
+   revision called this irrelevant for a balancer ("past 90° it has fallen").
+   That was wrong* — the robot balances *at* 90°, so leaning 5° forward and 5°
+   back were indistinguishable. Fixed by the balance-mode frame
+   (`OMNIS_IMU_BALANCE_FRAME_*` in `omnis_imu_mounting.h`); verified in
+   `test_control.c` Case 13.
 
 4. **Decoupled Euler rates.** `pitch_dot = gyro_y` is exact only at `roll = 0`;
    the full relation is `pitch_dot = gyro_y·cos(roll) − gyro_z·sin(roll)`. §11b

@@ -19,7 +19,7 @@ hooks) and §13 (balance control).
 | `imu_fusion.h/.c` | Mounting remap, fusion, fault, side detection |
 | `pid.h/.c` | Inner PID + outer velocity-bias loop |
 | `omnis_imu_mounting.h` | **As-built** chassis frame, corner labelling and IMU mount constants |
-| `test_control.c` | 76 host-side assertions |
+| `test_control.c` | 97 host-side assertions |
 | `run_host_tests.sh` | Build and run them — no ESP-IDF, no hardware |
 
 ## As-built chassis facts
@@ -46,7 +46,7 @@ See [`omnis_imu_mounting.h`](omnis_imu_mounting.h) for the chassis diagram.
 ./run_host_tests.sh
 ```
 
-## Three things that will bite
+## Four things that will bite
 
 1. **Correct the IMU mounting before the EKF, not after.** OMNIS's two modules
    *are* mounted antiparallel (confirmed 2026-09-05) — uncorrected, that makes
@@ -60,6 +60,11 @@ See [`omnis_imu_mounting.h`](omnis_imu_mounting.h) for the chassis diagram.
 3. **The outer velocity-bias loop's sign.** Forward drive effort must command a
    *backward* lean. Wrong sign accelerates until it falls over.
    → `pid-reference.md` §4
+4. **Never use the flat-frame pitch as the balance lean angle.** At the balance
+   point (±90°) `atan2(-ax, hypot(ay,az))` folds: nose-down 85° and 95° both read
+   85°, so which way the robot is falling is lost. Balance mode rotates into a
+   frame where the pose is level (`OMNIS_IMU_BALANCE_FRAME_*`).
+   → `attitude-ekf-derivation.md` §7
 
 ## Units
 

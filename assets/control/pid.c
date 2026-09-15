@@ -35,7 +35,7 @@ void pid_config_defaults(pid_config_t *cfg)
     cfg->integral_max =  1.0f;
 }
 
-void pid_init(pid_t *pid, const pid_config_t *cfg)
+void pid_init(pid_ctrl_t *pid, const pid_config_t *cfg)
 {
     if (pid == NULL) {
         return;
@@ -48,7 +48,7 @@ void pid_init(pid_t *pid, const pid_config_t *cfg)
     pid_reset(pid);
 }
 
-void pid_reset(pid_t *pid)
+void pid_reset(pid_ctrl_t *pid)
 {
     if (pid == NULL) {
         return;
@@ -79,7 +79,7 @@ void pid_reset(pid_t *pid)
  * instead means the integrator holds whatever value it had when the actuator
  * ran out of authority, and resumes the moment there is authority again.
  * ------------------------------------------------------------------------ */
-float pid_update(pid_t *pid, float setpoint, float measurement,
+float pid_update(pid_ctrl_t *pid, float setpoint, float measurement,
                  float measurement_rate, float dt)
 {
     if (pid == NULL || dt <= 0.0f) {

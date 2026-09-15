@@ -394,3 +394,74 @@ would have bitten in Stage 3 or 7:
    pitch ≈ ±90°, where `atan2(-ax, hypot(ay,az))` reads 85° for both 85° and 95°
    of nose-down. The lean direction is lost exactly where it matters.
    `attitude-ekf-derivation.md` §7 called this "survivable" — that was wrong.
+
+---
+
+## 2026-09-15 — Two latent bugs fixed in `assets/control/` before porting
+
+Both found by reading ahead to Stages 3 and 7, before any of the code reached
+the target. Fixed at the source so the asset folder and the firmware stay
+byte-identical.
+
+### 1. `pid_t` collides with POSIX
+
+`assets/control/pid.h` declared `typedef struct {...} pid_t;`. `pid_t` is the
+POSIX process-id type in `sys/types.h`, which ESP-IDF headers include throughout.
+Reproduced on both compilers the moment `sys/types.h` is in scope:
+
+```
+xtensa-esp32s3-elf-gcc: error: conflicting types for 'pid_t'; have 'struct <anonymous>'
+host clang:             error: typedef redefinition with different types
+```
+
+The host test had passed only because nothing it included happened to reach
+`sys/types.h`. Renamed to **`pid_ctrl_t`** everywhere (header, source, test, PID
+diagram). Verified: `pid.c`, `attitude_ekf.c` and `imu_fusion.c` all compile on
+xtensa with `-include sys/types.h -include unistd.h -Werror`.
+
+(First rename attempt silently did nothing: macOS `sed -E` does not support `\b`.
+Caught by the zero match count; redone with `perl`.)
+
+### 2. The flat-frame pitch folds at the balance point
+
+This one is a design error in my own earlier documentation, not a typo.
+
+`pitch = atan2(-ax, hypot(ay, az))` is confined to ±90° because the hypot is
+never negative. Balance mode sits at ±90° — the edge of the range — where the
+formula **reflects**:
+
+| Nose-down | `pitch` reads |
+|---|---|
+| 85° (leaning 5° back from upright on the front pair) | **84.999992°** |
+| 95° (leaning 5° forward) | **84.999985°** |
+
+Which way the robot is falling — the only thing a balancer needs — is destroyed
+at the operating point. `attitude-ekf-derivation.md` §7 was titled "why it is
+survivable" and argued pitch passes cleanly through 90°. That was wrong, and a
+balance controller built on it would have pushed the wrong way on one side of
+upright. The EKF would also have fought itself: past the fold, the gyro
+prediction and the accelerometer update disagree in sign.
+
+**Fix: change frames, not formulas.** While balancing, the body-frame accel and
+gyro are rotated a further 90° about Y before reaching the EKF, so the pose looks
+level to the filter. Both frames put `+X'` on the chassis top face:
+
+| Pose | Map | Verified: 95°/85° read |
+|---|---|---|
+| Front pair down | `{+3,+2,−1}` | **+5.000° / −5.000°** |
+| Rear pair down | `{+3,−2,+1}` | **+5.000° / −5.000°** |
+
+So positive balance-frame pitch always means "falling forward", in either pose,
+and `gyro_y'` is always its rate (checked: `+0.1` rad/s for a forward fall on
+both pairs). An EKF seeded at +3° followed the lean through zero to
+**−3.004°**. The flat-frame pitch keeps its *sign* through the fold, so it still
+picks the grounded pair at arming — which is all it is used for now.
+
+Constants `OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN` / `_REAR_DOWN` added to
+`omnis_imu_mounting.h`; the mounting self-check now covers all four descriptors.
+Corrected: derivation §7 (rewritten, with a correction notice), reference §7
+items 2–3, sensor-fusion reference (the disagreement metric is
+rotation-invariant, so needs no change), README ("four things that will bite"),
+the walkthrough's integration example, and master omnis-info.md §11c.
+
+**Host tests:** `assets/control` 76 → **97** assertions (Case 13 added), 0 fail.

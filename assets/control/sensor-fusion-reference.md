@@ -223,6 +223,16 @@ That last row is the whole argument. In balance mode a **60° roll difference is
 only 3.46° of real disagreement**, because roll means nothing there. A naive
 `|roll_A − roll_B|` test would fault continuously on a healthy robot.
 
+### Balance mode changes frames — the metric does not care
+
+While balancing, the firmware rotates both IMUs' vectors into a balance frame
+where the balancing pose is level
+([`attitude-ekf-derivation.md`](attitude-ekf-derivation.md) §7.3), because the
+flat-frame pitch folds at ±90°. The disagreement metric needs no change: both
+gravity vectors pass through the *same* rotation, and a rotation preserves the
+angle between two vectors. The 15° threshold means exactly the same thing in
+either frame.
+
 ### Threshold
 
 ```

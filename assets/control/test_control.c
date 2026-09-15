@@ -17,6 +17,7 @@
 #include "attitude_ekf.h"
 #include "imu_fusion.h"
 #include "pid.h"
+#include "omnis_imu_mounting.h"
 
 #define DEG(r) ((r) * 180.0f / 3.14159265358979323846f)
 #define RAD(d) ((d) * 3.14159265358979323846f / 180.0f)
@@ -270,7 +271,7 @@ static void case9_pid(void)
     c.kp = 8.0f; c.ki = 2.0f; c.kd = 0.4f;
     c.out_min = -100.0f; c.out_max = 100.0f; c.integral_max = 30.0f;
 
-    pid_t p;
+    pid_ctrl_t p;
     pid_init(&p, &c);
 
     float u;
@@ -299,7 +300,7 @@ static void case10_antiwindup(void)
     c.kp = 8.0f; c.ki = 2.0f; c.kd = 0.4f;
     c.out_min = -100.0f; c.out_max = 100.0f; c.integral_max = 30.0f;
 
-    pid_t p;
+    pid_ctrl_t p;
     pid_init(&p, &c);
 
     /* Error of -20 rad -> P = -160, hard against the -100 floor for 6 s. */
@@ -438,6 +439,103 @@ static void case12_mount_resolver(void)
     chk_true("  ... POSITIVE pitch = nose DOWN", p > 0.0f);
 }
 
+
+/* --------------------------------------------------------------- Case 13 */
+/* Balance mode sits at pitch +-90 deg. The flat-frame pitch FOLDS there, so the
+ * lean direction is lost at the balance point; the balance-frame remap fixes it.
+ * An earlier revision of attitude-ekf-derivation.md §7 called the flat pitch
+ * "survivable" at 90 deg. These assertions are the evidence that it is not. */
+static float pitch_of(const float a[3]) { return atan2f(-a[0], hypotf(a[1], a[2])); }
+static float roll_of(const float a[3])  { return atan2f(a[1], a[2]); }
+
+/* Body-frame accelerometer (reads UP) for a pure rotation about Y.
+ * Nose-down is positive, matching the measurement model. */
+static void accel_for_nose_down(float deg, float a[3])
+{
+    a[0] = -sinf(RAD(deg));
+    a[1] = 0.0f;
+    a[2] =  cosf(RAD(deg));
+}
+
+static void case13_balance_frames(void)
+{
+    puts("\nCase 13 - balance frames: flat pitch FOLDS at 90 deg, remap fixes it");
+    float a85[3], a90[3], a95[3], b[3];
+
+    /* --- The bug: front pair down, leaning 5 deg each way. --------------- */
+    accel_for_nose_down(85.0f, a85);
+    accel_for_nose_down(90.0f, a90);
+    accel_for_nose_down(95.0f, a95);
+    chk("flat pitch, nose-down 85 deg   [deg]", DEG(pitch_of(a85)), 85.0, 1e-3);
+    chk("flat pitch, nose-down 95 deg   [deg]", DEG(pitch_of(a95)), 85.0, 1e-3);
+    chk_true("  ... IDENTICAL: which way it falls is lost",
+             fabsf(pitch_of(a85) - pitch_of(a95)) < 1e-5f);
+
+    /* --- The fix. -------------------------------------------------------- */
+    const imu_mount_t fd = OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN;
+    const imu_mount_t rd = OMNIS_IMU_BALANCE_FRAME_REAR_DOWN;
+    chk_true("front-down frame valid, right-handed",
+             imu_mount_is_valid(&fd) && imu_mount_is_right_handed(&fd));
+    chk_true("rear-down frame valid, right-handed",
+             imu_mount_is_valid(&rd) && imu_mount_is_right_handed(&rd));
+
+    imu_apply_mount(&fd, a90, b);
+    chk("front-down upright -> pitch'   [deg]", DEG(pitch_of(b)), 0.0, 1e-3);
+    chk("front-down upright -> roll'    [deg]", DEG(roll_of(b)),  0.0, 1e-3);
+    imu_apply_mount(&fd, a95, b);
+    chk("front-down, falling FORWARD 5  [deg]", DEG(pitch_of(b)),  5.0, 1e-3);
+    imu_apply_mount(&fd, a85, b);
+    chk("front-down, falling BACK 5     [deg]", DEG(pitch_of(b)), -5.0, 1e-3);
+
+    /* Rear pair down = nose UP 90 = nose-down -90. Forward (toward the top
+     * face) is further nose-up. The flat frame folds here too. */
+    float r_up[3], r_fwd[3], r_back[3];
+    accel_for_nose_down(-90.0f, r_up);
+    accel_for_nose_down(-95.0f, r_fwd);
+    accel_for_nose_down(-85.0f, r_back);
+    chk("flat pitch, rear-down fwd      [deg]", DEG(pitch_of(r_fwd)),  -85.0, 1e-3);
+    chk("flat pitch, rear-down back     [deg]", DEG(pitch_of(r_back)), -85.0, 1e-3);
+    imu_apply_mount(&rd, r_up, b);
+    chk("rear-down upright -> pitch'    [deg]", DEG(pitch_of(b)), 0.0, 1e-3);
+    imu_apply_mount(&rd, r_fwd, b);
+    chk("rear-down, falling FORWARD 5   [deg]", DEG(pitch_of(b)),  5.0, 1e-3);
+    imu_apply_mount(&rd, r_back, b);
+    chk("rear-down, falling BACK 5      [deg]", DEG(pitch_of(b)), -5.0, 1e-3);
+
+    /* --- Gyro sign must agree with the remapped pitch ----------------------
+     * The EKF predicts pitch_dot = gyro_y. Falling forward on the front pair is
+     * nose-down increasing (gyro_y > 0); on the rear pair it is nose-down
+     * DECREASING (gyro_y < 0). Both must come out as gyro_y' > 0, or prediction
+     * and accelerometer update fight each other in that frame. */
+    const float g_front[3] = { 0.0f,  0.1f, 0.0f };
+    const float g_rear[3]  = { 0.0f, -0.1f, 0.0f };
+    imu_apply_mount(&fd, g_front, b);
+    chk("front-down: fwd fall rate -> gyro_y'", b[1], 0.1, 1e-6);
+    imu_apply_mount(&rd, g_rear, b);
+    chk("rear-down:  fwd fall rate -> gyro_y'", b[1], 0.1, 1e-6);
+
+    /* --- The flat frame still picks the pair: magnitude folds, sign does not */
+    chk_true("pair from flat pitch: front-down -> FRONT",
+             omnis_balance_pair_from_pitch(pitch_of(a95)) == OMNIS_BALANCE_ON_FRONT_PAIR);
+    chk_true("pair from flat pitch: rear-down  -> REAR",
+             omnis_balance_pair_from_pitch(pitch_of(r_fwd)) == OMNIS_BALANCE_ON_REAR_PAIR);
+
+    /* --- End to end: EKF in the balance frame tracks a lean through zero --- */
+    attitude_ekf_t e;
+    attitude_ekf_init(&e, NULL);
+    float raw[3], s0[3], s1[3];
+    accel_for_nose_down(93.0f, raw);  imu_apply_mount(&fd, raw, s0);
+    accel_for_nose_down(87.0f, raw);  imu_apply_mount(&fd, raw, s1);
+    attitude_ekf_seed_from_accel(&e, s0[0], s0[1], s0[2]);
+    chk("EKF seeded at 3 deg forward    [deg]", DEG(attitude_ekf_pitch(&e)), 3.0, 1e-3);
+    for (int i = 0; i < 1500; ++i) {
+        attitude_ekf_step(&e, 0.0f, 0.0f, s1[0], s1[1], s1[2], 0.002f);
+    }
+    /* Tolerance covers the small bias-state transient seen in Case 4. */
+    chk("EKF follows lean to 3 deg back [deg]", DEG(attitude_ekf_pitch(&e)), -3.0, 0.3);
+    chk_true("  ... with the sign correct", attitude_ekf_pitch(&e) < 0.0f);
+}
+
 int main(void)
 {
     puts("OMNIS control-stack verification");
@@ -455,6 +553,7 @@ int main(void)
     case10_antiwindup();
     case11_velocity_bias();
     case12_mount_resolver();
+    case13_balance_frames();
 
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return (g_fail == 0) ? 0 : 1;

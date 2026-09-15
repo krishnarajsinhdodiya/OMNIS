@@ -40,7 +40,7 @@ hardware addition to this project.**
                   │                              ▼
                   │                    ┌───────────────────┐
                   │   fused pitch ────▶│ INNER  500 Hz     │
-                  │   gyro rate   ────▶│ pid_t             │
+                  │   gyro rate   ────▶│ pid_ctrl_t        │
                   │                    └─────────┬─────────┘
                   │                              │ commanded accel
                   │                              ▼
@@ -85,6 +85,8 @@ slowly relative to a 500 Hz loop, the first term drops and `D = −kd · rate`.
 
 Two benefits beyond latency: no derivative kick when the setpoint steps, and no
 amplification of EKF quantisation noise by a `1/dt` = 500 factor.
+
+> The controller type is `pid_ctrl_t`, not `pid_t`: `pid_t` is the POSIX process-id type from `sys/types.h`, which every ESP-IDF build includes, and redefining it is a hard compile error on the target.
 
 **2. Conditional-integration anti-windup.**
 
@@ -212,7 +214,7 @@ Tune in this order, on a tether rig or soft surface:
 
 ## 6. Verified numbers
 
-`./run_host_tests.sh` — 67 assertions, 0 failures.
+`./run_host_tests.sh` — 97 assertions, 0 failures.
 
 ### PID arithmetic — `kp=8, ki=2, kd=0.4`, out ±100, `imax=30`, `dt=0.002`
 

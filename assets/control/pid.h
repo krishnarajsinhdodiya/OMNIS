@@ -4,7 +4,7 @@
  *
  * Implements omnis-info.md §13b's cascaded architecture:
  *
- *   INNER (500 Hz)  pid_t         — lean-angle PID. Output is a commanded
+ *   INNER (500 Hz)  pid_ctrl_t         — lean-angle PID. Output is a commanded
  *                                   wheel ACCELERATION, per §13b.
  *   OUTER (~20 Hz)  vel_bias_t    — integrates commanded step-rate as a
  *                                   velocity proxy and biases the lean target
@@ -65,14 +65,14 @@ typedef struct {
     float last_d;         /**< diagnostics: derivative term       */
     float last_error;     /**< diagnostics                        */
     bool  saturated;      /**< output hit a clamp on the last call */
-} pid_t;
+} pid_ctrl_t;
 
 /** Fill cfg with zero gains and symmetric unit limits. Gains MUST be set by
  *  the caller — see §13d, there are no sensible defaults for this plant. */
 void pid_config_defaults(pid_config_t *cfg);
 
 /** Initialise state and copy the config. Clears the integrator. */
-void pid_init(pid_t *pid, const pid_config_t *cfg);
+void pid_init(pid_ctrl_t *pid, const pid_config_t *cfg);
 
 /**
  * @brief Clear the integrator and diagnostics, keeping the gains.
@@ -80,7 +80,7 @@ void pid_init(pid_t *pid, const pid_config_t *cfg);
  * Call on every transition into balance mode. Carrying an integrator across a
  * mode change applies correction earned under completely different dynamics.
  */
-void pid_reset(pid_t *pid);
+void pid_reset(pid_ctrl_t *pid);
 
 /**
  * @brief One control step.
@@ -98,13 +98,13 @@ void pid_reset(pid_t *pid);
  * @param dt                timestep [s]
  * @return clamped control output
  */
-float pid_update(pid_t *pid, float setpoint, float measurement,
+float pid_update(pid_ctrl_t *pid, float setpoint, float measurement,
                  float measurement_rate, float dt);
 
-static inline float pid_integral(const pid_t *p)  { return p->integral;  }
-static inline float pid_last_p(const pid_t *p)    { return p->last_p;    }
-static inline float pid_last_d(const pid_t *p)    { return p->last_d;    }
-static inline bool  pid_saturated(const pid_t *p) { return p->saturated; }
+static inline float pid_integral(const pid_ctrl_t *p)  { return p->integral;  }
+static inline float pid_last_p(const pid_ctrl_t *p)    { return p->last_p;    }
+static inline float pid_last_d(const pid_ctrl_t *p)    { return p->last_d;    }
+static inline bool  pid_saturated(const pid_ctrl_t *p) { return p->saturated; }
 
 /* ======================================================================== */
 

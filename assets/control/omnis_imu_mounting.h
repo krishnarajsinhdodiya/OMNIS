@@ -88,11 +88,13 @@ extern "C" {
 
 /* --- Balance mode --------------------------------------------------------
  * Front is a short edge, so tipping up onto two wheels rotates the chassis
- * about the body Y (left-right) axis. The lean angle is therefore PITCH, and
- * roll is gimbal-locked and unused in balance mode (attitude-ekf-derivation.md
- * §7). The grounded pair is the front pair or the rear pair, never a side pair
- * — which is what omnis-info.md §1's "balance on either side" means for this
- * geometry.
+ * about the body Y (left-right) axis, by about 90 degrees. The grounded pair is
+ * the front pair or the rear pair, never a side pair — which is what
+ * omnis-info.md §1's "balance on either side" means for this geometry.
+ *
+ * In the FLAT frame, neither Euler angle is usable at that attitude: roll is
+ * gimbal-locked, and pitch FOLDS (see the balance frames below). Balance mode
+ * therefore estimates attitude in its own frame.
  * ------------------------------------------------------------------------ */
 typedef enum {
     OMNIS_BALANCE_ON_FRONT_PAIR = 0,   /**< FL + FR grounded, pitch ~ +90 deg */
@@ -112,6 +114,11 @@ typedef enum {
  * tipped forward onto the front wheels reads +90 deg. Hence pitch >= 0 maps to
  * the FRONT pair being grounded. Asserted in test_control.c Case 12.
  *
+ * Pass the FLAT-frame pitch. Near +-90 deg its magnitude folds (85 and 95 both
+ * read 85) but its SIGN does not, so it still answers "which pair is down" —
+ * the one question needed at the moment of arming, before switching frames. It
+ * must not be used as the lean angle. Asserted in test_control.c Case 13.
+ *
  * Deliberately trivial and deliberately NOT called every tick — omnis-info.md
  * §11c is explicit that a live side-detector fights the balance controller
  * mid-balance. Call it at mode entry or after a detected flip.
@@ -122,21 +129,71 @@ static inline omnis_balance_pair_t omnis_balance_pair_from_pitch(float pitch_rad
                                : OMNIS_BALANCE_ON_REAR_PAIR;
 }
 
+/* --- Balance-mode estimation frames -------------------------------------
+ * THE FLAT-FRAME PITCH CANNOT BE THE BALANCE LEAN ANGLE.
+ *
+ * pitch = atan2(-ax, hypot(ay, az)) is confined to [-90, +90] deg because the
+ * hypot is never negative. Balance mode sits at +-90 deg, the edge of that
+ * range, where the formula FOLDS: nose-down 85 deg and nose-down 95 deg both
+ * read 85 deg. The one thing a balancer must know — which way it is falling — is
+ * destroyed at the operating point. (Verified in test_control.c Case 13. An
+ * earlier revision of attitude-ekf-derivation.md §7 called this "survivable";
+ * it is not.)
+ *
+ * The fix changes frames, not formulas. In balance mode the body-frame accel and
+ * gyro are rotated a further 90 deg about Y before they reach the EKF, so the
+ * balancing pose looks LEVEL to the filter: lean sits near 0, where pitch is
+ * continuous and signed, and roll is no longer gimbal-locked either.
+ *
+ * Both frames are defined so that, while balancing:
+ *   +X'  points toward the chassis TOP face (the OLED side) — "balance forward"
+ *   +Z'  points up
+ *   +Y'  completes a right-handed frame
+ *
+ * so in EITHER pose a positive balance-frame pitch means "falling forward"
+ * (toward the top face), and gyro_y' is its rate. One sign convention serves
+ * both pairs.
+ *
+ *   front pair down (nose down 90):  X' = +Z, Y' = +Y, Z' = -X  ->  {+3, +2, -1}
+ *   rear  pair down (nose up   90):  X' = +Z, Y' = -Y, Z' = +X  ->  {+3, -2, +1}
+ *
+ * Y' flips in the rear pose: with X' on the top face and Z' up, the robot's LEFT
+ * (+Y') is the chassis RIGHT side. When balancing on the rear pair, the "left"
+ * wheel is RR and the "right" wheel is RL.
+ *
+ * Apply AFTER the sensor mount (OMNIS_IMU_A_MOUNT / _B_MOUNT) and after gyro-bias
+ * subtraction, then re-seed the EKFs from the accelerometer: their old states
+ * are meaningless in the new frame.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN  ((imu_mount_t){ { +3, +2, -1 } })
+#define OMNIS_IMU_BALANCE_FRAME_REAR_DOWN   ((imu_mount_t){ { +3, -2, +1 } })
+
+/** The estimation frame to use while balancing on the given pair. */
+static inline imu_mount_t omnis_balance_frame_for_pair(omnis_balance_pair_t pair)
+{
+    return (pair == OMNIS_BALANCE_ON_FRONT_PAIR) ? OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN
+                                                 : OMNIS_IMU_BALANCE_FRAME_REAR_DOWN;
+}
+
 /**
  * @brief Boot-time assertion helper. Returns false if either mount descriptor
  *        is malformed or mirrored.
  *
- * Both constants above are known-good, so this only ever fires after someone
+ * All four constants above are known-good, so this only fires after someone
  * edits them — which is precisely when a silent axis error would be hardest to
  * find. Cheap enough to run unconditionally at startup.
  */
 static inline bool omnis_imu_mounting_selfcheck(void)
 {
-    const imu_mount_t a = OMNIS_IMU_A_MOUNT;
-    const imu_mount_t b = OMNIS_IMU_B_MOUNT;
+    const imu_mount_t a  = OMNIS_IMU_A_MOUNT;
+    const imu_mount_t b  = OMNIS_IMU_B_MOUNT;
+    const imu_mount_t bf = OMNIS_IMU_BALANCE_FRAME_FRONT_DOWN;
+    const imu_mount_t br = OMNIS_IMU_BALANCE_FRAME_REAR_DOWN;
 
-    return imu_mount_is_valid(&a) && imu_mount_is_right_handed(&a)
-        && imu_mount_is_valid(&b) && imu_mount_is_right_handed(&b);
+    return imu_mount_is_valid(&a)  && imu_mount_is_right_handed(&a)
+        && imu_mount_is_valid(&b)  && imu_mount_is_right_handed(&b)
+        && imu_mount_is_valid(&bf) && imu_mount_is_right_handed(&bf)
+        && imu_mount_is_valid(&br) && imu_mount_is_right_handed(&br);
 }
 
 #ifdef __cplusplus
