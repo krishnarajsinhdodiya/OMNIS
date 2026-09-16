@@ -1,7 +1,8 @@
 # OMNIS Superloop MVP — Build Plan
 
-**Status:** PLAN APPROVED 2026-09-05. Stages 1–2 built and verified. Stages 3–7
-being completed in one pass per the 2026-09-15 change of process below.
+**Status: COMPLETE — 2026-09-16.** All seven stages built, host-tested and
+committed. Stage 1 is verified on hardware; Stages 3–7 await the assembled
+Rev 2.0 board — the bench procedure is in [TESTING.md](TESTING.md).
 **Created:** 2026-09-05
 **Target:** ESP32-S3-WROOM-1-N16R8 on EdgeHax S3 Pro, ESP-IDF v6.0.2 (native macOS install at `/Users/krishnaraj/.espressif/v6.0.2/esp-idf`)
 
@@ -447,3 +448,47 @@ defaults to be confirmed on the bench at the stage that uses them.
 ---
 
 **Awaiting approval before writing any code.**
+
+---
+
+## 6. Completion — 2026-09-16
+
+Every stage in §3 is built, host-tested, and committed separately with its
+reasoning in [BUILD-LOG.md](BUILD-LOG.md).
+
+| Stage | Commit | Built | Host-tested | On hardware |
+|---|---|---|---|---|
+| 1 Skeleton, pins, params, 500 Hz tick | `15d3534`, `265e25e` | ✅ | — | ✅ 500.0 Hz, zero overruns, no jitter |
+| 2 Kinematics port + RC mapping | `07c3f45` | ✅ | 89 assertions | ✅ boot self-check on the FPU |
+| 3 MPU6050 + EKF + fusion | `30a9455` | ✅ | 125 assertions | ⬜ |
+| 4 CRSF parser + RC input | `d120adf` | ✅ | 55 assertions | ⬜ |
+| 5 RMT step generation | `e46fce9` | ✅ | 100 assertions | ⬜ |
+| 6 Faults, buzzer, supervisor | `bcffa20` | ✅ | 79 assertions | ⬜ |
+| 7 Balance + integration | `1fa9786` | ✅ | 28 assertions | ⬜ |
+
+Supporting commits: the Rev 2.0 pinout migration (`b50e97d`) and two latent-bug
+fixes in `assets/control/` found before porting (`39cd3dc`).
+
+### What was delivered against §0's scope
+
+| Promised | Delivered |
+|---|---|
+| 500 Hz balance/EKF loop, dual-IMU, inverse-covariance weighted, >15° fault | ✅ — plus a balance-frame fix the original scope did not anticipate |
+| 4-wheel mecanum IK/FK, verified equations, unchanged | ✅ byte-identical port, `diff`-checked in CI-style at each stage |
+| CRSF parser, throttle→vx, yaw→w, pitch+roll→vy/vx | ✅ plus link-loss failsafe, arm/mode/speed switches, RX-pin auto-detect |
+| STEP generation via RMT only, nothing in the hot path | ✅ four channels, burst re-arm, exact queue regulation |
+| Buzzer fault/failsafe indicator | ✅ plus a full fault latch and arming supervisor |
+| Excluded: OLED, buttons, SD, OTA, any RTOS primitive | ✅ none implemented, none stubbed; no-RTOS verified mechanically |
+
+### Decisions, as settled
+
+1a ESP-IDF, no RTOS primitive in OMNIS code (Arduino rejected on evidence) ·
+1b RMT Option B, burst re-arm · 1c inner balance PID in, outer velocity-bias loop
+wired but off by default.
+
+### What is still unknown until the board runs
+
+Real I²C time per tick · IMU mounting on Rev 2.0 · motor DIR polarities · radio
+channel order and stick polarity · every balance gain · the RMT inter-transaction
+gap. Each has a procedure in TESTING.md and a parameter to change; none needs a
+code change.

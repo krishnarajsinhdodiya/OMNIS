@@ -959,3 +959,61 @@ tip forward — a controlled fall is non-minimum-phase. The assertion now checks
 - **No encoders**, so the robot will drift across the room (§13a). The outer loop is
   the mitigation, and it is off by default.
 - **Every balance gain is unknown** until the robot is on a tether.
+
+---
+
+## 2026-09-16 — Build complete: summary, and where to pick it up
+
+All seven stages are built, host-tested and committed. **Stage 1 is the only
+stage verified on hardware** (500 Hz, zero overruns, 2026-09-07, on the Rev 1
+board); everything since was written against an unassembled Rev 2.0 board, so the
+bench procedure in `TESTING.md` is the remaining work.
+
+### Totals
+
+| | |
+|---|---|
+| Firmware | 44 files in `main/`, ~244 KB binary, 77% of the app partition free |
+| Host tests | 7 suites, **463 assertions**, plus 97 in `assets/control/` |
+| Builds verified | normal, bench-pattern, and all-optional-switches-on — each with **zero warnings** |
+| No-RTOS rule | verified mechanically: no FreeRTOS call, handle or include in 44 sources, and none of `libmain.a`'s 185 undefined symbols |
+
+### Bugs found, and what found them
+
+Worth recording because the pattern is informative: **the tests and the
+derivations caught more than the compiler did.**
+
+| # | Bug | Found by | Would have looked like |
+|---|---|---|---|
+| 1 | `pid_t` collides with POSIX `sys/types.h` | compiling the asset on the target toolchain before porting | a hard compile error at Stage 7, blamed on the port |
+| 2 | Flat-frame pitch **folds** at the balance point: 85° and 95° both read 85° | re-deriving §7 while designing the balance frame | a balancer that pushes the wrong way on one side of upright, blamed on gains |
+| 3 | Chunks ended early above ~30 000 steps/s (symbol buffer, not the clock) | `test_step_wave.c` on the first run | queue lead silently eroding at high speed |
+| 4 | Telemetry rate biased high (two off-by-ones) | the Stage 1 **hardware** run reading 500.13 Hz | a "healthy" loop rate that hides degradation |
+| 5 | Balance wheel sign: front-pair contact is at body **+X**, not −X | re-deriving the rolling relation before writing it down | wheels driving away from the fall on one pair only |
+| 6 | Test asserted forward stick commands forward acceleration | reading the assertion's own output | a tautological test passing forever |
+
+Two process mishaps, both caught before any commit: zsh's read-only `$status`
+aborted a command line and left the bench flag enabled in a working file; and two
+parallel shell calls shared one working directory, so a build ran in the wrong
+place and a "clean" compliance scan had actually scanned nothing.
+
+### Where to pick this up
+
+1. **Set the A4988 current limits (Vref) before connecting 12 V.** `EN#` is
+   hardwired on Rev 2.0 — the motors energise the instant power is applied.
+2. Work through `TESTING.md` in order. Stages 3–6 need only USB and a radio;
+   Stage 5 onward needs the wheels off the ground.
+3. The four things most likely to need changing, all parameters, none code:
+   IMU mount constants (Stage 3.3 wizard), motor `dir_invert` flags (Stage 5.1),
+   radio channel map and stick polarity (Stage 4.1), balance gains (Stage 7.4).
+4. `BUILD-LOG.md` (this file) explains why each decision was made; `PLAN.md` has
+   the scope and the settled decisions; `omnis-info.md` here is the project info
+   file annotated for this build.
+
+### What this build deliberately leaves for the FreeRTOS version
+
+OLED and buttons, microSD and `params.json`, logging, OTA and Wi-Fi, battery
+sensing — and the custom RTOS layer itself. Every pure module here (kinematics,
+EKF, fusion, PID, balance, CRSF parser, fault/supervisor logic, waveform
+generator) has no ESP-IDF dependency and carries over unchanged; only the glue
+(`main.c`, `imu.c`, `crsf.c`, `step_gen.c`, `buzzer.c`) is superloop-shaped.
