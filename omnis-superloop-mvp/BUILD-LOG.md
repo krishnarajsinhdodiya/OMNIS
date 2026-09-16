@@ -1010,18 +1010,22 @@ dated entry above.
 
 | Stage | Commit | Built | Host-tested | On hardware |
 |---|---|---|---|---|
-| 1 Skeleton, pins, params, 500 Hz tick | `15d3534`, `265e25e` | ✅ | — | ✅ 500.0 Hz, zero overruns, no jitter |
-| 2 Kinematics port + RC mapping | `07c3f45` | ✅ | 89 assertions | ✅ boot self-check on the FPU |
-| 3 MPU6050 + EKF + fusion | `30a9455` | ✅ | 125 assertions | ⬜ |
-| 4 CRSF parser + RC input | `d120adf` | ✅ | 55 assertions | ⬜ |
-| 5 RMT step generation | `e46fce9` | ✅ | 100 assertions | ⬜ |
-| 6 Faults, buzzer, supervisor | `bcffa20` | ✅ | 79 assertions | ⬜ |
-| 7 Balance + integration | `1fa9786` | ✅ | 28 assertions | ⬜ |
+| 1 Skeleton, pins, params, 500 Hz tick | `5417f0e`, `c59b800` | ✅ | — | ✅ 500.0 Hz, zero overruns, no jitter |
+| 2 Kinematics port + RC mapping | `ce1ed5e` | ✅ | 89 assertions | ✅ boot self-check on the FPU |
+| 3 MPU6050 + EKF + fusion | `4343cfe` | ✅ | 125 assertions | ⬜ |
+| 4 CRSF parser + RC input | `c207829` | ✅ | 55 assertions | ⬜ |
+| 5 RMT step generation | `b3cd4a7` | ✅ | 100 assertions | ⬜ |
+| 6 Faults, buzzer, supervisor | `d2ae99a` | ✅ | 79 assertions | ⬜ |
+| 7 Balance + integration | `ef6a6a5` | ✅ | 28 assertions | ⬜ |
 
-Supporting commits: the Rev 2.0 pinout migration (`b50e97d`) and two latent-bug
-fixes in `assets/control/` found before porting (`39cd3dc`). The kinematics
-re-derivation for the parallel roller layout came later (`8abea72`, `98a725e`,
-`16105be`, `2f54fea`).
+> The hashes in this table were regenerated on 2026-09-16 when the history was
+> rewritten to remove the `Co-Authored-By` trailers from every commit message.
+> Commit contents and dates are unchanged; only the hashes moved.
+
+Supporting commits: the Rev 2.0 pinout migration (`89d6120`) and two latent-bug
+fixes in `assets/control/` found before porting (`4952f1d`). The kinematics
+re-derivation for the parallel roller layout came later (`949a173`, `32cf246`,
+`0fdb93f`, `ece97a0`).
 
 ### What was delivered against the original scope
 
