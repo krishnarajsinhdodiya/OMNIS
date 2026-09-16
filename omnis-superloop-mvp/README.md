@@ -13,9 +13,8 @@ learned and implemented. Deferred features are deferred, not abandoned.
 |---|---|
 | **[TESTING.md](TESTING.md)** | Bench bring-up, stage by stage. **Start here before powering anything.** |
 | **[OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md)** | Build and flash, the superloop explained, a file-by-file index, and the tuning cheat sheet |
-| [PLAN.md](PLAN.md) | Scope, decisions and why, stage definitions |
-| [BUILD-LOG.md](BUILD-LOG.md) | The full history: what was built, what was learned, every bug found |
-| [omnis-info.md](omnis-info.md) | The project info file, updated for this build |
+| [BUILD-LOG.md](BUILD-LOG.md) | The full history: what was built, what was learned, every decision, every bug found. **Also holds the scope, the settled decisions 1a/1b/1c and the stage-by-stage commit table** — `PLAN.md` was folded into it once the build finished |
+| [../assets/documentation/omnis-info.md](../assets/documentation/omnis-info.md) | **The project info file — one copy, for the whole project.** The full specification, with `> **Superloop MVP:**` notes under each section saying what this build actually does |
 
 ---
 
@@ -56,7 +55,7 @@ learned and implemented. Deferred features are deferred, not abandoned.
      └────────────────────────────────────────────────────────────────────────┘
 ```
 
-**The no-RTOS rule** (PLAN.md §1a): no RTOS primitive in OMNIS-authored code.
+**The no-RTOS rule** (BUILD-LOG.md, Planning 1a): no RTOS primitive in OMNIS-authored code.
 ESP-IDF driver internals are treated as hardware. The rule was checked mechanically,
 not just followed: neither `main/` source nor the undefined symbols of the compiled
 `libmain.a` contain any FreeRTOS task, queue, semaphore, event-group, timer or port

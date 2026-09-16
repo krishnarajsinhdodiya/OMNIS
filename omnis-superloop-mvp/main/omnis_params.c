@@ -58,7 +58,7 @@ void omnis_params_defaults(omnis_params_t *p)
      *             never reaches the clamp first. The ceiling is unchanged from
      *             the X-drive layout for exactly that reason.
      *
-     * Unverified on hardware — see PLAN.md open question 6.
+     * Unverified on hardware — see BUILD-LOG.md, open items carried to the bench.
      * ------------------------------------------------------------------- */
     p->rc_scale.vx_max_mmps       = 300.0f;
     p->rc_scale.vx_secondary_mmps = 150.0f;

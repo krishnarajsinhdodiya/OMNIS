@@ -2,7 +2,7 @@
  * @file    omnis_time.h
  * @brief   Time helpers for a build with no RTOS delay primitives.
  *
- * PLAN.md §1a: no vTaskDelay anywhere in OMNIS-authored code. The superloop is
+ * BUILD-LOG.md Planning 1a: no vTaskDelay anywhere in OMNIS-authored code. The superloop is
  * paced by the GPTimer tick; the only delays that exist are short boot-time
  * waits (sensor reset, filter settling), and those are busy-waits on the ROM's
  * microsecond delay.

@@ -5,7 +5,7 @@
  * Pure: no IDF, no clock. Host-tested in test/test_balance.c, including a
  * closed-loop inverted-pendulum simulation on both wheel pairs.
  *
- * Implements omnis-info.md §13b as scoped by PLAN.md decision 1c:
+ * Implements omnis-info.md §13b as scoped by BUILD-LOG.md Planning 1c:
  *
  *   INNER (every tick)  pid_ctrl_t on the balance-frame lean angle, derivative
  *                       taken from the raw gyro. Output = commanded wheel

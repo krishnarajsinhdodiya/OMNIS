@@ -2,7 +2,7 @@
  * @file    step_gen.h
  * @brief   STEP/DIR generation for all four A4988s on the RMT peripheral.
  *
- * PLAN.md §1b Option B, "burst re-arm": every tick, each wheel queues short
+ * BUILD-LOG.md Planning 1b Option B, "burst re-arm": every tick, each wheel queues short
  * bursts of STEP pulses at its current rate, and the RMT driver's own ISR chains
  * them back-to-back. Nothing of ours runs in the pulse hot path — no task, no
  * timer ISR toggling pins, no loop.

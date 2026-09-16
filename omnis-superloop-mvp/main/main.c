@@ -2,7 +2,7 @@
  * @file    main.c
  * @brief   OMNIS superloop MVP — boot sequence and the superloop.
  *
- * ARCHITECTURE (PLAN.md §1a). One while(1) inside app_main, paced by a 500 Hz
+ * ARCHITECTURE (BUILD-LOG.md Planning 1a). One while(1) inside app_main, paced by a 500 Hz
  * GPTimer ISR that does nothing but set a flag. No xTaskCreate, queues,
  * semaphores, mutexes or vTaskDelay anywhere in OMNIS-authored code; ESP-IDF
  * driver internals are treated as part of the hardware. app_main is pinned to

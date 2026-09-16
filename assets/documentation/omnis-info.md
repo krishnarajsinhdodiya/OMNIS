@@ -1,5 +1,65 @@
 # OMNIS — Project Info File
 
+> **What this file is.** The single source of truth for OMNIS, covering **both**
+> firmware builds:
+>
+> - **The specification** — what OMNIS is designed to be, including everything
+>   the superloop MVP defers. This is the brief for the full FreeRTOS build.
+> - **What the superloop MVP actually does**, section by section, as indented
+>   `> **Superloop MVP:**` notes under the section they qualify.
+>
+> **Everything unmarked applies to both builds.** Where a `Superloop MVP` note
+> appears it describes the deadline build in `omnis-superloop-mvp/`, and
+> overrides the surrounding text for that build only.
+>
+> There is deliberately no second copy of this file. It previously existed twice
+> — the spec here and an annotated duplicate inside `omnis-superloop-mvp/` — and
+> the two had to be edited in lockstep, which is exactly the drift risk a
+> duplicate invites. Merged into one file 2026-09-16.
+>
+> **Companion documents:** `omnis-superloop-mvp/README.md` (overview and layout),
+> `OPERATIONS_GUIDE.md` (build, architecture, file index, tuning cheat sheet),
+> `TESTING.md` (bench bring-up), `BUILD-LOG.md` (what was built, what was
+> learned, every decision and every bug found), and `assets/kinematics/` +
+> `assets/control/` for the drivetrain and estimation maths.
+
+## MVP at a glance
+
+| | |
+|---|---|
+| **Architecture** | One `while(1)` in `app_main`, paced by a 500 Hz GPTimer ISR that only sets a flag. **No FreeRTOS primitive in OMNIS-authored code** — verified mechanically, see below. |
+| **Built** | 500 Hz dual-IMU EKF + fusion + 15° disagreement fault · mecanum IK/FK · CRSF radio · RMT STEP generation for four A4988s · buzzer faults and failsafe · arming supervisor · two-wheel balance |
+| **Excluded** | OLED and buttons (§14) · microSD, FATFS and `params.json` (§9) · OTA and Wi-Fi (§8) · battery sensing (§3g). **Deferred, not abandoned.** |
+| **Verified on hardware** | Stage 1 only (500 Hz timing spine, 2026-09-07). Everything else is built, host-tested and awaiting the assembled Rev 2.0 board. |
+| **Host tests** | 7 suites, 463 assertions, plus 97 more in `assets/control/` |
+
+### Why a superloop, and what it costs
+
+The full design (§1) commits to a custom RTOS layer on FreeRTOS. This build
+deliberately sets that aside to get the robot moving on a deadline, and returns to
+it afterwards. The bridge is not free:
+
+- **Everything shares one thread of control.** A slow section delays everything
+  else, so the loop measures itself every tick and faults if it misses 5% of its
+  deadlines while armed.
+- **No task priorities.** Work that a real RTOS build would put on a low-priority
+  task (logging, telemetry) must instead be rationed by hand — which is why the
+  status line is once a second and silent while balancing.
+- **ESP-IDF is still FreeRTOS underneath.** `app_main` is itself a task and the
+  drivers use RTOS primitives internally. The rule adopted is that *OMNIS-authored
+  code* uses none, and IDF driver internals count as hardware. This is checked, not
+  assumed: neither the firmware sources nor the undefined symbols of the compiled
+  `libmain.a` reference any FreeRTOS task, queue, semaphore, event-group, timer or
+  port symbol.
+
+What carries over unchanged to the FreeRTOS build: the kinematics, the EKF and
+fusion, the PID and balance controller, the CRSF parser, the fault and supervisor
+logic, and the waveform generator — all of them pure, host-tested modules with no
+IDF dependency.
+
+---
+
+
 **Name:** OMNIS — **O**mnidirectional **M**obility and **N**on-holonomic **I**nertial **S**tabilization
 
 ---
@@ -11,6 +71,12 @@ A four-wheel car, each wheel driven by its own stepper motor, built as a persona
 1. **Holonomic drive** — Magnum (angled-roller/Mecanum-style) wheels give full directional control: strafe, rotate in place, move diagonally, without needing to turn first.
 2. **Self-balancing mode** — the car can also tip up and balance/drive on two wheels, Segway-style, in addition to normal 4-wheel driving.
 
+> **Superloop MVP:** implemented as stated — all four motors stay energised (board
+> Rev 2.0 hardwires `EN#`, so they are energised whenever 12 V is present), and the
+> grounded pair is chosen at arming from the sign of the flat-frame pitch. The
+> airborne pair is commanded zero. Which pair is "active" is re-evaluated only at
+> arming, never mid-balance.
+
 **Balance-mode wheel behavior (confirmed):** all four steppers stay powered and active during 2-wheel balance mode — none are mechanically or electrically disengaged. This is deliberate: the platform needs to be able to balance on *either* side, so if it's flipped mid-run the "new" pair of wheels needs to be immediately drivable without a mode-switch delay. Firmware/control implication: the balance controller needs to know (or detect) which side is currently down and re-map which two wheels are "active" for balance thrust vs. which two are along for the ride, rather than assuming a fixed pair.
 
 The name is deliberately left open-ended (not tied to "car" or "stepper" specifically) since this platform may extend into further omnidirectional-wheel work down the line.
@@ -21,6 +87,11 @@ The name is deliberately left open-ended (not tied to "car" or "stepper" specifi
 - A custom RTOS layer, built on top of FreeRTOS (which ships inside ESP-IDF) — see `vscode-setup.md` §8 for the learning path
 - Custom peripheral drivers rather than pulling in ready-made libraries wherever reasonably feasible
 - An EKF (Extended Kalman Filter) fusing the two IMUs for attitude/balance estimation
+
+> **Superloop MVP:** the custom RTOS layer is the one item deliberately postponed —
+> this build is a plain superloop (see "Why a superloop" above). The other three hold:
+> register-level drivers written here (MPU6050, CRSF, RMT step generation), no
+> Arduino libraries, and the dual-IMU EKF is implemented and host-tested.
 
 ---
 
@@ -143,6 +214,18 @@ Every other net agrees. If the schematic is ever changed back to match the plann
 
 ## 5. Open Items / Not Yet Finalized
 
+> **Superloop MVP — how each open item was resolved for this build:**
+>
+> - **Emergency kill switch:** implemented as an **arm switch** on channel 6. HIGH
+>   permits motors; LOW or MID never does. Arming needs a LOW→HIGH edge that the
+>   attempt consumes, so a switch left HIGH at power-on cannot arm, and the robot
+>   never re-arms itself when a fault clears.
+> - **Heading hold:** not implemented (out of MVP scope).
+> - **IMU trim pot:** implemented as `params.balance.trim_rad`, a static offset on
+>   the *lean target* — §13b's recommendation — not a gain trim. The S1 slider is
+>   instead available as a live **kp** knob for tuning (`OMNIS_TUNE_KP_FROM_POT`).
+> - **Button pull-downs:** not relevant here; buttons are excluded.
+
 - **RC channel/switch semantics (§7d)** — "emergency skill switch" read as **emergency kill switch** (assumed transcription); heading-hold momentary button's hold-vs-toggle behavior; and what the IMU trim potentiometer trims (static balance-setpoint bias vs. live gain) are all still undefined. Pick these before writing the input-handling state machine, not while debugging it.
 
 
@@ -152,8 +235,8 @@ Every other net agrees. If the schematic is ever changed back to match the plann
 - `setup-guides/phase0-toolchain-environment.md` — toolchain bring-up
 - `setup-guides/esp32-command-reference.md` — command lookup
 - **`assets/kinematics/`** — mecanum IK/FK: reference, derivation, walkthrough, and `mecanum_kinematics.{c,h}`. Fills §10.
+- **`omnis-superloop-mvp/`** — the **superloop MVP firmware**: a complete, deadline build of the core (500 Hz EKF, mecanum drive, CRSF radio, RMT step generation, faults/supervisor, two-wheel balance) as a plain `while(1)` with no FreeRTOS primitives in project code. See its `README.md` for layout, `OPERATIONS_GUIDE.md` for build/architecture/tuning, `TESTING.md` for bench bring-up, and `BUILD-LOG.md` for the full history and every decision. OLED, buttons, SD, OTA and battery sensing are excluded — deferred, not abandoned, and still specified in this file.
 - **`assets/control/`** — attitude EKF, dual-IMU fusion and balance PID: reference, derivation, walkthrough, `attitude_ekf.{c,h}`, `imu_fusion.{c,h}`, `pid.{c,h}`, and the as-built `omnis_imu_mounting.h`. Fills §11 and §13's implementation.
-- **`omnis-superloop-mvp/`** — the **superloop MVP firmware**: a complete, deadline build of the core (500 Hz EKF, mecanum drive, CRSF radio, RMT step generation, faults/supervisor, two-wheel balance) as a plain `while(1)` with no FreeRTOS primitives in project code. See its `README.md` for layout, `TESTING.md` for bench bring-up, `PLAN.md` for scope and decisions, `BUILD-LOG.md` for the full history, and `omnis-info.md` there for this file annotated for that build. OLED, buttons, SD, OTA and battery sensing are excluded — deferred, not abandoned.
 
 ---
 
@@ -183,6 +266,14 @@ Ten channels used; CRSF's standard RC frame carries 16 regardless of ExpressLRS 
 GPIO17 = ESP32 UART TX (feeds the ExLRS Rx module's Rx pin), GPIO18 = ESP32 UART RX (receives CRSF from the ExLRS Rx module's Tx pin) — already established in §3c, repeated here because the CRSF parser is the first thing this section depends on. Parse actual CRSF frames (start byte 0xC8, frame-type 0x16 for packed 11-bit RC channels) rather than treating the UART as a simple value stream — write and bench-test this driver before anything else here, since every mode/mixing decision below reads from it.
 
 ### 7c. Mode-dependent joystick mixing (as specified)
+
+> **Superloop MVP:** flat mode is implemented exactly as described (throttle and
+> pitch both into `vx`, roll into `vy`, yaw into `w`, one mecanum mix), with the
+> speed-limiter switch scaling the sticks *before* the kinematics so every axis is
+> limited equally. Balance mode is implemented with yaw disabled, pitch as a lean
+> offset into the balance setpoint and roll as a turn differential — i.e. routed
+> through the control loop, not applied as a raw actuator command. Throttle is
+> unused while balancing.
 
 **Flat (4-wheel holonomic) mode:**
 - Throttle → forward/back thrust
@@ -221,6 +312,12 @@ CRSF/ExpressLRS failsafe behavior (no-pulses / hold-last-value / defined failsaf
 ---
 
 ## 8. OTA (Over-the-Air) Firmware Updates over Wi-Fi & Partition Scheme
+
+> **Superloop MVP: EXCLUDED — deferred, not abandoned.** No Wi-Fi, no OTA, and the
+> default single-app partition table. Flashing is over USB. Nothing in this section
+> is implemented; it stands as the specification for the full build. Note that
+> §8g's "disable `COM_ENA` before an update" no longer has a mechanism — board
+> Rev 2.0 removed that line (§3f).
 
 ### 8a. Scope
 
@@ -276,6 +373,13 @@ Enable `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`. A newly-flashed image boots into
 ---
 
 ## 9. SD Card Storage — Data Logging & JSON Parameter File
+
+> **Superloop MVP: EXCLUDED — deferred, not abandoned.** No microSD, no FATFS, no
+> logging. `params.json` is replaced by `main/omnis_params.c`: the same schema
+> (§9f) as one C struct filled from compile-time defaults, deliberately passed by
+> pointer everywhere so a JSON loader can drop in later without touching a single
+> call site. Changing a parameter today means editing that file and reflashing.
+> GPIO 10–14 are left unconnected for the card socket.
 
 ### 9a. Two independent uses on one card
 
@@ -500,11 +604,24 @@ Two independent MPU6050s (§2, diagonally opposite corners) each run their own l
 
 ### 11d. Update rate
 
+> **Superloop MVP:** 500 Hz achieved and measured on hardware — 500.0 Hz with zero
+> overruns and no measurable jitter (Stage 1, 2026-09-07). The shared I²C bus is
+> indeed the suspected bottleneck; the loop reports the worst per-tick I²C time
+> every second, and `OMNIS_IMU_READ_ALTERNATE` halves it by reading one IMU per tick
+> if needed. Each filter uses its own *measured* dt, so nothing breaks at any rate.
+
 Target 500Hz for the EKF/balance loop — a well-established range for small, aggressive balancing robots, achievable on the ESP32-S3's dual 240MHz cores. The shared I2C bus (§3a: OLED + both MPU6050s) is the likely bottleneck, not CPU — read both IMUs every cycle and keep the OLED update off the balance loop's critical path, same task-isolation principle as §9h.
 
 ---
 
 ## 12. IMU / Sensor Calibration Procedure
+
+> **Superloop MVP:** step 1 (gyro bias at every boot) is implemented, gated on the
+> robot actually being still — gyro and accelerometer standard deviation plus a
+> 1 g magnitude check, retried up to five times, and a latched fault if it never
+> settles. Step 0 (mounting) is implemented as an interactive wizard. Steps 2–3
+> (six-position accelerometer calibration) are **not** implemented: they need the
+> persistent storage this build excludes.
 
 Populates the `imu_calibration` block already scaffolded in `params.json` (§9f).
 
@@ -541,10 +658,21 @@ No step-loss detection is possible without encoders, so the mitigation is preven
 
 ### 13d. Gain tuning
 
+> **Superloop MVP:** no gains are shipped — they default to zero and the supervisor
+> **refuses to arm balance mode with zero gains**, so the robot cannot be armed into
+> a mode that does nothing. `TESTING.md` §7.3–7.4 gives the bench sign check and the
+> tuning order from this section, plus an optional live-kp slider so a search does
+> not need a reflash per attempt.
+
 No numeric PID gains are given here — they depend on physical parameters (mass, CG height, wheel radius) this file doesn't have, and a number offered without them would be a guess dressed up as a spec. Tune empirically: start conservative (small Kp, no Ki/Kd), test on a soft surface or a tether rig, increase Kp until oscillation appears then back off ~30%, add Kd to damp what's left, add a small Ki last (only to correct steady-state lean — too aggressive and it fights the outer velocity-bias loop in §13b).
 
 ---
 
 ## 14. On-Screen Config Menu (B_SF)
+
+> **Superloop MVP: EXCLUDED — deferred, not abandoned.** No OLED, no buttons, no
+> menu. Their GPIOs are listed as reserved in `main/omnis_pins.h` so nothing in this
+> build claims them. Status comes from the once-a-second telemetry line and the
+> buzzer patterns instead (`TESTING.md` §6.4).
 
 Deferred by design — the menu tree, navigation model, and OLED layout get built once the rest of the firmware (RC, drive modes, EKF, balance, OTA, SD) is working and its actual settings surface is known, rather than designing a UI around guesses now. Every other section that references "the on-screen menu" (§2, §7a, §8g, §9f) describes what it will eventually need to expose — treat those as the requirements list when this section gets filled in.

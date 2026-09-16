@@ -120,7 +120,7 @@
  * RESERVED — wired on the board, NOT touched by this build.
  *
  * Listed so nothing here claims one by accident. Each belongs to an excluded
- * feature (PLAN.md "explicitly excluded"): deferred, not abandoned.
+ * feature (BUILD-LOG.md, delivered-against-scope): deferred, not abandoned.
  *
  *   GPIO 6        BATT_SENSE  33k/10k divider, ADC1_CH5
  *   GPIO 1        B_UP        button, active-HIGH, external 10k pull-down

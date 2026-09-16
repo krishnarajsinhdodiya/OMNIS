@@ -71,9 +71,7 @@ OMNIS/
 │   ├── OPERATIONS_GUIDE.md           build, architecture, file index, tuning
 │   ├── TESTING.md                    bench bring-up, stage by stage
 │   ├── README.md                     overview and stage status
-│   ├── PLAN.md                       scope, decisions, open questions
-│   ├── BUILD-LOG.md                  construction history, every bug found
-│   └── omnis-info.md                 the info file, annotated for this build
+│   └── BUILD-LOG.md                  scope, decisions, construction history
 │
 ├── assets/
 │   ├── kinematics/                   drivetrain maths, derived from scratch
@@ -83,7 +81,7 @@ OMNIS/
 │   │   └── mecanum_kinematics.{c,h}             the module itself
 │   ├── control/                      EKF, fusion and PID: derivations + modules
 │   ├── documentation/
-│   │   ├── omnis-info.md             full design spec — the source of truth
+│   │   ├── omnis-info.md             full design spec + what the MVP does — ONE copy
 │   │   ├── s3-pro-docs/              board pinout, datasheet, CAD model
 │   │   └── setup-guides/             toolchain, VS Code, ESP32 command reference
 │   └── pcb/                          KiCad project and schematics

@@ -4,7 +4,7 @@
  *
  * NO RTOS PRIMITIVES in this code. The i2c_master driver blocks internally on
  * its own completion event while a transfer is on the bus — that is an IDF
- * driver internal, treated as hardware under PLAN.md §1a — and is only ever
+ * driver internal, treated as hardware under BUILD-LOG.md Planning 1a — and is only ever
  * called from the superloop, never from an ISR.
  *
  * Health tracking lives here because this is the only layer that can see it.

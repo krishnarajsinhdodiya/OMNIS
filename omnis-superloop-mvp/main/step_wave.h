@@ -8,7 +8,7 @@
  * rmt_symbol_word_t and queues them; test/test_step_wave.c proves the waveform
  * properties on the host by expanding the symbols back into a timeline.
  *
- * WHY CHUNKS (PLAN.md §1b, Option B): the RMT peripheral cannot change the rate
+ * WHY CHUNKS (BUILD-LOG.md Planning 1b, Option B): the RMT peripheral cannot change the rate
  * of a looping transmission without disable/enable/transmit on every change. So
  * each tick queues a fresh ~2 ms burst at the current rate, and the driver's own
  * ISR chains the bursts back-to-back.

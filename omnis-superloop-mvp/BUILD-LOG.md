@@ -13,6 +13,11 @@ Newest entries at the bottom.
 
 **Built:** `PLAN.md`. No code.
 
+> **2026-09-16:** `PLAN.md` was folded into this file once the build was complete
+> and deleted. Its decisions (1a, 1b, 1c) are recorded below under their original
+> numbers, and its completion tables are in the final entry. Source comments that
+> cited `PLAN.md §1a` now cite this entry.
+
 **Decisions:**
 
 **1a — What "no FreeRTOS" actually means here.** ESP-IDF *is* FreeRTOS; `app_main`
@@ -137,7 +142,7 @@ one appears the loop is already too slow. Headroom trending toward zero is the
   defence, and the correct value depends on the A4988 Vref current limit that has
   not been set yet (§3f).
 - RC scaling constants (`vx_max_mmps` etc.) are derived from Case D's practical
-  ceiling but unverified on hardware — PLAN.md question 6.
+  ceiling but unverified on hardware — planning question 6.
 - `PIN_TICK_HEARTBEAT` (GPIO35) is bring-up scaffolding and should be removed
   once the tick is trusted.
 
@@ -304,7 +309,7 @@ and RR **exactly** `0.0f`, not merely small.
 - Nothing drives a motor yet. `sol.rates` is computed and measured but discarded;
   Stage 5's RMT generator is what consumes it.
 - Stick polarity inverts all default to `false` — unverified until a radio is
-  bound in Stage 4 (PLAN.md question 6 territory).
+  bound in Stage 4 (planning question 6 territory).
 - `vx_max_mmps` and friends remain derived-but-unverified.
 
 ### Still to do
@@ -320,7 +325,7 @@ integration.
 remaining stage to be finished in one pass (Claude access lapses for ~2 months
 from 2026-09-16; the board is not yet assembled). Per-stage approval is replaced
 by per-stage commits, target builds with zero warnings, host tests, and
-`TESTING.md` for the bench. Recorded in PLAN.md.
+`TESTING.md` for the bench. Recorded in the planning entry above.
 
 **Built:** `main/omnis_pins.h` rewritten; `main/main.c` loses COM_ENA and the
 GPIO35 heartbeat; `sdkconfig.defaults` flash header 16 MB -> 8 MB; master
@@ -773,7 +778,7 @@ both empty: (1) source grep of `main/` for any FreeRTOS call, handle type or
 catches anything reaching FreeRTOS through a macro or header — contain no
 `xTask*`, `vTask*`, `xQueue*`, `xSemaphore*`, `xEventGroup*`, `xTimer*` or port
 symbols. What the firmware does import is ESP-IDF driver API (`rmt_*`, `uart_*`,
-`i2c_*`, `gptimer_*`, `gpio_*`, `esp_timer_*`), exactly the line drawn in PLAN.md §1a.
+`i2c_*`, `gptimer_*`, `gpio_*`, `esp_timer_*`), exactly the line drawn in Planning 1a.
 
 ### Design decisions and why
 
@@ -940,7 +945,7 @@ tuning.
 mid-balance clears the integrators and the forward speed, which is a fall.
 
 **The outer velocity-bias loop is wired but off** (`vel_bias_gain = 0`), matching
-PLAN.md decision 1c. Enabling it is a parameter change, not a code change.
+planning decision 1c. Enabling it is a parameter change, not a code change.
 
 ### A test assertion that was wrong
 
@@ -997,6 +1002,54 @@ aborted a command line and left the bench flag enabled in a working file; and tw
 parallel shell calls shared one working directory, so a build ran in the wrong
 place and a "clean" compliance scan had actually scanned nothing.
 
+### Every stage, and the commit it landed in
+
+Carried over from `PLAN.md` §6 when that file was folded into this one
+(2026-09-16). Each stage was committed separately, with its reasoning in the
+dated entry above.
+
+| Stage | Commit | Built | Host-tested | On hardware |
+|---|---|---|---|---|
+| 1 Skeleton, pins, params, 500 Hz tick | `15d3534`, `265e25e` | ✅ | — | ✅ 500.0 Hz, zero overruns, no jitter |
+| 2 Kinematics port + RC mapping | `07c3f45` | ✅ | 89 assertions | ✅ boot self-check on the FPU |
+| 3 MPU6050 + EKF + fusion | `30a9455` | ✅ | 125 assertions | ⬜ |
+| 4 CRSF parser + RC input | `d120adf` | ✅ | 55 assertions | ⬜ |
+| 5 RMT step generation | `e46fce9` | ✅ | 100 assertions | ⬜ |
+| 6 Faults, buzzer, supervisor | `bcffa20` | ✅ | 79 assertions | ⬜ |
+| 7 Balance + integration | `1fa9786` | ✅ | 28 assertions | ⬜ |
+
+Supporting commits: the Rev 2.0 pinout migration (`b50e97d`) and two latent-bug
+fixes in `assets/control/` found before porting (`39cd3dc`). The kinematics
+re-derivation for the parallel roller layout came later (`8abea72`, `98a725e`,
+`16105be`, `2f54fea`).
+
+### What was delivered against the original scope
+
+| Promised | Delivered |
+|---|---|
+| 500 Hz balance/EKF loop, dual-IMU, inverse-covariance weighted, >15° fault | ✅ — plus a balance-frame fix the original scope did not anticipate |
+| 4-wheel mecanum IK/FK, verified equations, unchanged | ✅ byte-identical port — later re-derived, once the wheels turned out not to be in an X-drive |
+| CRSF parser, throttle→vx, yaw→w, pitch+roll→vy/vx | ✅ plus link-loss failsafe, arm/mode/speed switches, RX-pin auto-detect |
+| STEP generation via RMT only, nothing in the hot path | ✅ four channels, burst re-arm, exact queue regulation |
+| Buzzer fault/failsafe indicator | ✅ plus a full fault latch and arming supervisor |
+| Excluded: OLED, buttons, SD, OTA, any RTOS primitive | ✅ none implemented, none stubbed; no-RTOS verified mechanically |
+
+### Decisions, as settled
+
+**1a** ESP-IDF, no RTOS primitive in OMNIS-authored code (Arduino rejected on
+evidence) · **1b** RMT Option B, burst re-arm · **1c** inner balance PID in,
+outer velocity-bias loop wired but off by default. The reasoning for each is in
+the 2026-09-05 Planning entry at the top of this file, which is what the
+`PLAN.md §1a` / `§1b` / `decision 1c` citations throughout the source now refer
+to.
+
+### Open items carried to the bench
+
+Questions 5 and 6 from the original plan — the CRSF kill-switch channel
+(default: ch 6, HIGH = armed) and the RC scaling constants (300 / 150 / 300 /
+1.5) — carry stated defaults to be confirmed on the bench at the stage that uses
+them. Every other planning question was closed during the build.
+
 ### Where to pick this up
 
 1. **Set the A4988 current limits (Vref) before connecting 12 V.** `EN#` is
@@ -1006,9 +1059,10 @@ place and a "clean" compliance scan had actually scanned nothing.
 3. The four things most likely to need changing, all parameters, none code:
    IMU mount constants (Stage 3.3 wizard), motor `dir_invert` flags (Stage 5.1),
    radio channel map and stick polarity (Stage 4.1), balance gains (Stage 7.4).
-4. `BUILD-LOG.md` (this file) explains why each decision was made; `PLAN.md` has
-   the scope and the settled decisions; `omnis-info.md` here is the project info
-   file annotated for this build.
+4. `BUILD-LOG.md` (this file) explains why each decision was made, and since
+   2026-09-16 also carries the scope and the settled decisions that used to live
+   in `PLAN.md`. The project info file is at `../assets/documentation/omnis-info.md`
+   — one copy for the whole project, with per-section notes on what this build does.
 
 ### What this build deliberately leaves for the FreeRTOS version
 
@@ -1138,7 +1192,7 @@ conditioning and a §13 reviewer's checklist of what moved), `reference.md`, and
 `code-explained.md` (whose verification transcript is now real output from the
 shipped source). `TESTING.md` Stages 5.1 and 7.1, both copies of `omnis-info.md`,
 `omnis_imu_mounting.h` (the IMUs sit on the FL/RR diagonal, which *was* a
-handedness pair and is not one now), the root `README.md` and `PLAN.md`'s
+handedness pair and is not one now), the root `README.md` and `PLAN.md`'s (now folded into this file)
 corner-labelling note were all brought into line.
 
 `OPERATIONS_GUIDE.md` was added in the same pass: build and flash, the superloop

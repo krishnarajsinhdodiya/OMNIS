@@ -3,7 +3,7 @@
  * @brief   Runtime-tunable parameters for the OMNIS superloop MVP.
  *
  * Mirrors the `params.json` schema from omnis-info.md §9f, but populated from
- * compile-time defaults because this build has no SD card (PLAN.md: microSD and
+ * compile-time defaults because this build has no SD card (BUILD-LOG.md: microSD and
  * FATFS are excluded, deferred not abandoned).
  *
  * WHY A STRUCT AND NOT #defines: §9f's whole point is that these become a file
@@ -83,7 +83,7 @@ typedef struct {
     float integral_max;
     float trim_rad;            /**< §7d's trim pot: static lean-target offset */
     float lean_limit_rad;      /**< outer loop's clamp                       */
-    float vel_bias_gain;       /**< outer loop gain; 0 = off (PLAN.md 1c)    */
+    float vel_bias_gain;       /**< outer loop gain; 0 = off (BUILD-LOG.md Planning 1c)    */
     float max_wheel_accel;     /**< PID output clamp [steps/s^2]             */
     float stick_lean_max_rad;  /**< full pitch stick -> this lean target     */
     float turn_max_steps;      /**< full roll stick -> this differential     */

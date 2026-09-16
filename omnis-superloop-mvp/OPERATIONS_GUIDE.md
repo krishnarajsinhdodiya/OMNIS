@@ -10,9 +10,8 @@ ESP-IDF **v6.0.2** · no FreeRTOS primitives in OMNIS-authored code.
 |---|---|
 | **[TESTING.md](TESTING.md)** | Bench bring-up, stage by stage. **Read §0 before applying 12 V.** |
 | [README.md](README.md) | One-page overview and current status |
-| [PLAN.md](PLAN.md) | Scope, the decisions taken and why |
-| [BUILD-LOG.md](BUILD-LOG.md) | Full construction history, every bug found and how |
-| [omnis-info.md](omnis-info.md) | Project info file, annotated for this build |
+| [BUILD-LOG.md](BUILD-LOG.md) | Scope, the settled decisions, the stage-by-stage commit table, and the full construction history with every bug found |
+| [../assets/documentation/omnis-info.md](../assets/documentation/omnis-info.md) | The project info file — the full spec, with per-section notes on what this build does |
 | [../assets/kinematics/](../assets/kinematics/) | The drivetrain maths, derived from first principles |
 | [../assets/control/](../assets/control/) | EKF, fusion and PID derivations |
 
@@ -264,9 +263,12 @@ Every file in `omnis-superloop-mvp/`, and what it is responsible for.
 | `README.md` | One-page overview and stage status |
 | `OPERATIONS_GUIDE.md` | This file |
 | `TESTING.md` | Bench bring-up procedure, stage by stage |
-| `PLAN.md` | Scope, stage definitions, decisions and open questions |
-| `BUILD-LOG.md` | Construction history: what was built, what broke, what was learned |
-| `omnis-info.md` | The project info file, annotated for this build |
+| `BUILD-LOG.md` | Construction history: what was built, what broke, what was learned. Also the scope, the settled decisions and the commit table, absorbed from `PLAN.md` |
+
+The project info file is **not** duplicated here — there is one copy for the
+whole project at [`../assets/documentation/omnis-info.md`](../assets/documentation/omnis-info.md),
+carrying the full specification with `> **Superloop MVP:**` notes on what this
+build actually does.
 
 ### 3.2 `main/` — configuration and support
 

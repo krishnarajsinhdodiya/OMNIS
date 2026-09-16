@@ -4,7 +4,7 @@
  *
  * Glue between the UART and the pure parser (crsf_parser.c). Polled once per
  * tick from the superloop with zero-timeout reads — no task, no queue, no event
- * callback of ours (PLAN.md §1a).
+ * callback of ours (BUILD-LOG.md Planning 1a).
  *
  * RX-ONLY, ON PURPOSE. The MVP sends nothing to the receiver (no telemetry), so
  * the UART TX signal is never routed to a pin. That makes the pin auto-detect
