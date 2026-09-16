@@ -44,7 +44,9 @@
 /* --- Stage 5 bench pattern ----------------------------------------------
  * 1: ignore the radio and cycle a fixed sequence of slow motions through the
  *    real drive pipeline and RMT step generation — forward, back, strafe left,
- *    rotate CCW, and the vx = vy diagonal that must leave FL and RR still.
+ *    rotate CCW, and the two diagonals, each of which must leave one SIDE
+ *    completely still (vx = vy idles the left, vx = -vy idles the right).
+ *    Under the parallel-roller layout the idle pair is a side, not a diagonal.
  *
  *    WHEELS OFF THE GROUND. Board Rev 2.0 has no driver enable: the pattern
  *    starts about 3 s after boot whether or not anyone is watching.

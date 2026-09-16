@@ -115,12 +115,18 @@ static void gpio_safe_state(void)
 
 static void log_params(const omnis_params_t *p)
 {
-    const float k = 0.5f * (p->geometry.wheelbase_mm + p->geometry.track_width_mm);
-    ESP_LOGI(TAG, "params v%" PRIu32 ": r=%.1f L=%.1f W=%.1f mm, k=%.1f mm | max %.0f "
-                  "st/s, accel %.0f st/s^2, deadband %.0f st/s",
+    /* Parallel rollers give the two axles different yaw levers, so print both.
+      * A rear lever near zero is EXPECTED on a near-square frame, not a fault. */
+    const mecanum_levers_t k = mecanum_yaw_levers(p->geometry.wheelbase_mm,
+                                                  p->geometry.track_width_mm);
+    ESP_LOGI(TAG, "params v%" PRIu32 ": r=%.1f L=%.1f W=%.1f mm | yaw levers front "
+                  "%.1f rear %.1f mm (%.1f:1) | max %.0f st/s, accel %.0f st/s^2, "
+                  "deadband %.0f st/s",
              p->schema_version, (double)p->geometry.wheel_radius_mm,
              (double)p->geometry.wheelbase_mm, (double)p->geometry.track_width_mm,
-             (double)k, (double)p->step.max_step_rate,
+             (double)fabsf(k.fl), (double)fabsf(k.rl),
+             (double)(k.rl != 0.0f ? fabsf(k.fl / k.rl) : INFINITY),
+             (double)p->step.max_step_rate,
              (double)p->step.max_accel_steps_s2, (double)p->step.deadband_steps);
     const omnis_channel_map_t *m = &p->channel_map;
     ESP_LOGI(TAG, "channels: thr %u pitch %u roll %u yaw %u | arm %u%s mode %u speed %u pot %u",
@@ -151,20 +157,28 @@ static bool kinematics_selftest(void)
             && near(a.rl, 3395.305f, T) && near(a.rr, 3395.305f, T);
     const wheel_rates_t b = mecanum_inverse(0.0f, 200.0f, 0.0f, R, L, W);
     ok = ok && near(b.fl, -3395.305f, T) && near(b.fr, 3395.305f, T)
-            && near(b.rl, 3395.305f, T) && near(b.rr, -3395.305f, T);
+            && near(b.rl, -3395.305f, T) && near(b.rr, 3395.305f, T);
+    /* Case C is the layout's signature: under parallel rollers a pure spin
+     * barely turns the rear pair (59 steps/s against 3845). An X-drive build
+     * would put 3845 on all four, so this line alone catches a stale port. */
     const wheel_rates_t c = mecanum_inverse(0.0f, 0.0f, 1.0f, R, L, W);
     ok = ok && near(c.fl, -3845.183f, T) && near(c.fr, 3845.183f, T)
-            && near(c.rl, -3845.183f, T) && near(c.rr, 3845.183f, T);
+            && near(c.rl, -59.418f, T) && near(c.rr, 59.418f, T);
     const wheel_rates_t d = mecanum_inverse(200.0f, 100.0f, 0.5f, R, L, W);
     ok = ok && near(d.fl, -224.939f, T) && near(d.fr, 7015.550f, T)
-            && near(d.rl, 3170.366f, T) && near(d.rr, 3620.244f, T);
+            && near(d.rl, 1667.944f, T) && near(d.rr, 5122.667f, T);
     const body_vel_t fk = mecanum_forward(&d, R, L, W);
     ok = ok && near(fk.vx, 200.0f, 0.01f) && near(fk.vy, 100.0f, 0.01f)
             && near(fk.w, 0.5f, 1e-4f) && near(mecanum_null_space(&d), 0.0f, 0.01f);
+    /* vx = vy idles the LEFT SIDE (it idled the FL/RR diagonal under X-drive),
+     * and vx = -vy must idle the right. Checking both directions is what
+     * distinguishes "handedness correct" from "handedness mirrored". */
     const wheel_rates_t diag = mecanum_inverse(200.0f, 200.0f, 0.0f, R, L, W);
-    ok = ok && diag.fl == 0.0f && diag.rr == 0.0f;
+    ok = ok && diag.fl == 0.0f && diag.rl == 0.0f;
+    const wheel_rates_t anti = mecanum_inverse(200.0f, -200.0f, 0.0f, R, L, W);
+    ok = ok && anti.fr == 0.0f && anti.rr == 0.0f;
 
-    ESP_LOGI(TAG, "kinematics self-check (cases A-D, round trip, null space, diagonal): %s",
+    ESP_LOGI(TAG, "kinematics self-check (cases A-D, round trip, null space, side idle): %s",
              ok ? "PASS" : "*** FAIL ***");
     return ok;
 }
@@ -250,11 +264,18 @@ static void bench_pattern(int64_t now_us, const omnis_params_t *p, drive_solutio
         { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
         { "BACKWARD 200 mm/s - all four wheels backward",         -200.0f,  0.0f, 0.0f, 3000u },
         { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
-        { "STRAFE LEFT 200 mm/s - FL,RR backward; FR,RL forward",    0.0f, 200.0f, 0.0f, 3000u },
+        { "STRAFE LEFT 200 mm/s - LEFT pair backward; RIGHT pair forward",
+                                                                    0.0f, 200.0f, 0.0f, 3000u },
         { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
-        { "ROTATE CCW 1 rad/s - FL,RL backward; FR,RR forward",      0.0f,   0.0f, 1.0f, 3000u },
+        /* Rear pair at 59 steps/s is a visible crawl, not a stall: parallel
+         * rollers absorb a spin almost entirely at the rear. See TESTING.md. */
+        { "ROTATE CCW 1 rad/s - FL,FR fast (3845); RL,RR CRAWL (59)",
+                                                                    0.0f,   0.0f, 1.0f, 3000u },
         { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
-        { "DIAGONAL vx=vy=150 - FR,RL forward; FL,RR MUST NOT TURN", 150.0f, 150.0f, 0.0f, 3000u },
+        { "DIAGONAL vx=vy=150 - FR,RR forward; FL,RL MUST NOT TURN", 150.0f, 150.0f, 0.0f, 3000u },
+        { "stop",                                                   0.0f,   0.0f, 0.0f, 1500u },
+        { "ANTI-DIAGONAL vx=-vy=150 - FL,RL forward; FR,RR MUST NOT TURN",
+                                                                  150.0f, -150.0f, 0.0f, 3000u },
     };
     static int     idx       = -1;
     static int64_t seg_start = 0;
