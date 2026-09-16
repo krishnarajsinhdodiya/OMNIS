@@ -43,11 +43,14 @@
  *
  * 2. Corner labelling follows from the front edge: FL = front-left as drawn,
  *    and the mecanum sign convention in mecanum-kinematics-reference.md §4
- *    (FL and RR share roller handedness delta = -1) is stated in these labels.
+ *    (the LEFT PAIR, FL and RL, share roller handedness delta = -1) is stated
+ *    in these labels.
  *
- * Incidental but worth knowing: the two IMUs sit on the FL/RR diagonal, which
- * is also the delta = -1 roller pair. Coincidence of layout, not a requirement
- * — nothing in the code depends on it.
+ * The two IMUs sit on the FL/RR diagonal. Under the old X-drive roller layout
+ * that diagonal was also a roller-handedness pair; under the as-built lateral
+ * parallel layout it is not — the pairs are the left and right SIDES. Nothing
+ * in the code ever depended on the coincidence, and this note is kept only
+ * because the earlier one claimed it.
  *
  * Reference: assets/control/sensor-fusion-reference.md §2
  */
