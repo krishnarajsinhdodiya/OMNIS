@@ -18,7 +18,9 @@
  * EACH TICK, in this order:
  *   1. sense    IMUs (read, filter, fuse) and radio
  *   2. judge    faults (IMU, link, tilt, overrun), then the supervisor
- *   3. act      drive pipeline -> acceleration limit -> STEP pulses, or stop
+ *   3. act      flat:    drive pipeline -> acceleration limit -> STEP pulses
+ *               balance: lean PID in the balance frame -> STEP pulses
+ *               otherwise stop
  *   4. report   buzzer every tick, telemetry once a second
  *
  * Every fault check runs before the motor command on every tick.
@@ -33,6 +35,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 
+#include "balance.h"
 #include "buzzer.h"
 #include "crsf.h"
 #include "drive.h"
@@ -62,6 +65,13 @@ static bool                   s_crsf_ok = false;   /* UART installed            
  * the acceleration limit. Kept across ticks because the slew limiter works from
  * where the wheels ARE, not from where they were last asked to be. */
 static wheel_rates_t s_cmd_rates = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+/* Balance controller, plus the per-arming summary printed on disarm (telemetry
+ * is silent while balancing — see OMNIS_TELEMETRY_IN_BALANCE). */
+static balance_cfg_t  s_bal_cfg;
+static balance_ctrl_t s_bal;
+static float          s_bal_peak_lean = 0.0f;
+static uint32_t       s_bal_ticks     = 0u;
 
 /* ==========================================================================
  * Boot helpers
@@ -195,9 +205,34 @@ static sup_config_t sup_config_from(const omnis_params_t *p)
         .settle_ms         = p->safety.balance_settle_ms,
         .upright_min_rad   = p->safety.upright_min_rad,
         .flat_max_tilt_rad = p->safety.arm_flat_max_tilt_rad,
-        /* Stage 6: the balance controller is not wired yet, so balance arming is
-         * refused with an explicit reason rather than silently doing nothing. */
-        .balance_gains_set = false,
+        /* Zero gains cannot balance anything (§13d; test_balance.c shows a
+         * zero-gain robot simply falls), so balance arming is refused until kp is
+         * set — or, in live-tuning mode, until the slider has a range to cover. */
+#if OMNIS_TUNE_KP_FROM_POT
+        .balance_gains_set = p->balance.tune_kp_max > 0.0f,
+#else
+        .balance_gains_set = p->balance.kp > 0.0f,
+#endif
+    };
+    return c;
+}
+
+static balance_cfg_t balance_cfg_from(const omnis_params_t *p)
+{
+    const balance_cfg_t c = {
+        .kp                 = p->balance.kp,
+        .ki                 = p->balance.ki,
+        .kd                 = p->balance.kd,
+        .integral_max       = p->balance.integral_max,
+        .max_wheel_accel    = p->balance.max_wheel_accel,
+        .max_wheel_rate     = p->step.max_step_rate,
+        .trim_rad           = p->balance.trim_rad,
+        .stick_lean_max_rad = p->balance.stick_lean_max_rad,
+        .turn_max_steps     = p->balance.turn_max_steps,
+        .lean_limit_rad     = p->balance.lean_limit_rad,
+        .vel_bias_gain      = p->balance.vel_bias_gain,
+        .outer_period_s     = p->balance.outer_period_s,
+        .output_invert      = p->balance.output_invert,
     };
     return c;
 }
@@ -272,16 +307,23 @@ static void telemetry_print(const window_t *w, int64_t now_us, const imu_state_t
     ESP_LOGI(TAG,
              "%.1fHz body %" PRIu32 "us ovr %" PRIu32 " | %s | faults %s"
              " | imu r%+.1f p%+.1f dis %.1f i2c %" PRIu32 "us bad %" PRIu32
-             " | rc %s LQ%u arm%d mode %s spd %s"
+             " | rc %s LQ%u thr%+.2f pit%+.2f rol%+.2f yaw%+.2f arm%d mode %s spd %s"
              " | whl %+.0f %+.0f %+.0f %+.0f",
              hz, body, w->overruns, sup_state_name(s_sup.state), desc,
              (double)(imu->roll * RAD2DEG), (double)(imu->pitch * RAD2DEG),
              (double)(w->worst_disagree * RAD2DEG), w->i2c_max_us, w->imu_invalid,
              !cs.locked ? "NONE" : (link_ok ? "OK" : "LOST"), (unsigned)cs.uplink_lq,
+             (double)rc->sticks.throttle, (double)rc->sticks.pitch,
+             (double)rc->sticks.roll, (double)rc->sticks.yaw,
              rc->arm_request ? 1 : 0, rc_switch_name(rc->drive_mode),
              rc_switch_name(rc->speed), (double)s_cmd_rates.fl, (double)s_cmd_rates.fr,
              (double)s_cmd_rates.rl, (double)s_cmd_rates.rr);
 
+#if OMNIS_TUNE_KP_FROM_POT
+    ESP_LOGI(TAG, "tune: slider %.2f -> kp %.0f (range 0..%.0f)", (double)rc->tune_pot,
+             (double)(rc->tune_pot * s_params->balance.tune_kp_max),
+             (double)s_params->balance.tune_kp_max);
+#endif
 #if OMNIS_BENCH_STEP_TEST
     uint32_t und = 0, fail = 0, rev = 0;
     uint64_t pulses = 0;
@@ -302,7 +344,7 @@ static void telemetry_print(const window_t *w, int64_t now_us, const imu_state_t
 void app_main(void)
 {
     ESP_LOGI(TAG, "==================================================");
-    ESP_LOGI(TAG, "OMNIS superloop MVP - board Rev 2.0");
+    ESP_LOGI(TAG, "OMNIS superloop MVP - board Rev 2.0 - all stages");
     ESP_LOGI(TAG, "==================================================");
 
     /* 1. Hardware safe before anything else can move. */
@@ -365,6 +407,8 @@ void app_main(void)
     }
 
     const sup_config_t sup_cfg = sup_config_from(s_params);
+    s_bal_cfg = balance_cfg_from(s_params);
+    balance_init(&s_bal, &s_bal_cfg);
     {
         char desc[96];
         fault_describe(s_faults.active, desc, sizeof desc);
@@ -452,6 +496,18 @@ void app_main(void)
             fault_raise(&s_faults, FAULT_TILT);
         }
 
+        /* While balancing, the filters run in the balance frame, so these are lean
+         * angles from upright on the grounded pair. The frame check matters: on
+         * the arming tick itself the estimate is still flat-frame (pitch ~85 deg)
+         * and would otherwise trip this instantly. Past the limit the robot has
+         * fallen or been grabbed. */
+        if (supervisor_wants_balance_frame(&s_sup) && imu.valid &&
+            imu.frame != IMU_FRAME_FLAT &&
+            (fabsf(imu.pitch) > s_params->balance.tilt_fault_rad ||
+             fabsf(imu.roll)  > s_params->balance.tilt_fault_rad)) {
+            fault_raise(&s_faults, FAULT_TILT);
+        }
+
         if (!supervisor_is_armed(&s_sup) && !rc.arm_request) {
             fault_clear_on_disarm(&s_faults);
         }
@@ -473,15 +529,44 @@ void app_main(void)
             s_cmd_rates.fl = s_cmd_rates.fr = s_cmd_rates.rl = s_cmd_rates.rr = 0.0f;
             step_gen_stop();
             buzzer_event(BUZZ_DISARMED, now_ms);
+            if (s_imu_ok) {
+                imu_set_frame(IMU_FRAME_FLAT);
+            }
             char desc[96];
             fault_describe(s_faults.active, desc, sizeof desc);
-            ESP_LOGW(TAG, "DISARMED (faults: %s)", desc);
+            if (s_bal_ticks > 0u) {
+                ESP_LOGW(TAG, "DISARMED after %.1f s balancing | peak lean %.1f deg | "
+                              "final speed %.0f st/s (faults: %s)",
+                         (double)s_bal_ticks / (double)TICK_RATE_HZ,
+                         (double)(s_bal_peak_lean * RAD2DEG), (double)s_bal.fwd_speed, desc);
+            } else {
+                ESP_LOGW(TAG, "DISARMED (faults: %s)", desc);
+            }
+            s_bal_ticks     = 0u;
+            s_bal_peak_lean = 0.0f;
             ignore_ovr_ticks = 3u;
         }
         if (s_sup.ev_armed) {
             buzzer_event(BUZZ_ARMED, now_ms);
-            ESP_LOGW(TAG, "ARMED -> %s", sup_state_name(s_sup.state));
+            if (supervisor_wants_balance_frame(&s_sup) && s_imu_ok) {
+                /* Estimate in the frame where upright reads level — the flat pitch
+                 * folds at 90 deg — and start the controller from rest. */
+                imu_set_frame(imu_frame_for_pair(s_sup.pair));
+                balance_reset(&s_bal);
+                ESP_LOGW(TAG, "ARMED -> %s on the %s pair: hold it upright for %u ms",
+                         sup_state_name(s_sup.state),
+                         s_sup.pair == OMNIS_BALANCE_ON_FRONT_PAIR ? "FRONT" : "REAR",
+                         (unsigned)s_params->safety.balance_settle_ms);
+            } else {
+                ESP_LOGW(TAG, "ARMED -> %s", sup_state_name(s_sup.state));
+            }
             ignore_ovr_ticks = 3u;
+        }
+        if (s_sup.ev_balance_engaged) {
+            /* Buzzer only: a log line here would disturb the loop at the exact
+             * moment it starts balancing. */
+            buzzer_event(BUZZ_BALANCE_ENGAGED, now_ms);
+            balance_reset(&s_bal);
         }
         if (s_sup.ev_rejected) {
             buzzer_event(BUZZ_ARM_REJECTED, now_ms);
@@ -497,8 +582,9 @@ void app_main(void)
         }
 
         /* ===== 3. ACT ===================================================== */
-        bool          drive_live = false;
-        wheel_rates_t target     = { 0.0f, 0.0f, 0.0f, 0.0f };
+        bool          drive_live   = false;
+        bool          balance_live = false;
+        wheel_rates_t target       = { 0.0f, 0.0f, 0.0f, 0.0f };
 
 #if OMNIS_BENCH_STEP_TEST
         if (s_step_ok) {
@@ -520,12 +606,34 @@ void app_main(void)
             drive_from_sticks(&sticks, s_params, &sol);
             target     = sol.rates;
             drive_live = true;
+        } else if (s_step_ok && s_sup.state == SUP_ARMED_BALANCE && imu.valid &&
+                   imu.frame != IMU_FRAME_FLAT) {
+#if OMNIS_TUNE_KP_FROM_POT
+            balance_set_kp(&s_bal, rc.tune_pot * s_params->balance.tune_kp_max);
+#endif
+            /* imu.pitch is the balance-frame lean (+ = falling toward the top
+             * face) and imu.gyro[1] its rate. Pitch stick leans the target;
+             * roll stick turns. The throttle is unused in balance mode. */
+            balance_step(&s_bal, &s_bal_cfg, s_sup.pair, imu.pitch, imu.gyro[1],
+                         rc.sticks.pitch, rc.sticks.roll, dt, &target);
+            /* Hold a wheel near zero still rather than dithering its DIR line
+             * (kinematics reference §6). */
+            mecanum_deadband(&target, s_params->step.deadband_steps);
+            balance_live = true;
+            ++s_bal_ticks;
+            if (fabsf(imu.pitch) > s_bal_peak_lean) s_bal_peak_lean = fabsf(imu.pitch);
         }
 #endif
 
         if (drive_live) {
             (void)drive_slew_rates(&s_cmd_rates, &target,
                                    s_params->step.max_accel_steps_s2 * dt);
+            step_gen_update(&s_cmd_rates);
+        } else if (balance_live) {
+            /* No extra slew here: the balance controller already limits
+             * acceleration through its PID output clamp, and an added rate limit
+             * is added lag — which destabilises a balancer. */
+            s_cmd_rates = target;
             step_gen_update(&s_cmd_rates);
         } else {
             s_cmd_rates.fl = s_cmd_rates.fr = s_cmd_rates.rl = s_cmd_rates.rr = 0.0f;
@@ -547,8 +655,10 @@ void app_main(void)
 
         if (win.ticks >= TICK_RATE_HZ) {
 #if OMNIS_TELEMETRY_ENABLED
-            telemetry_print(&win, now, &imu, link_ok, &rc);
-            ignore_ovr_ticks = 3u;   /* the line itself blocks for a few ms */
+            if (OMNIS_TELEMETRY_IN_BALANCE || !supervisor_wants_balance_frame(&s_sup)) {
+                telemetry_print(&win, now, &imu, link_ok, &rc);
+                ignore_ovr_ticks = 3u;   /* the line itself blocks for a few ms */
+            }
 #endif
             window_reset(&win);
         }

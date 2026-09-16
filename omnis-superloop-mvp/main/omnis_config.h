@@ -61,4 +61,21 @@
  * ------------------------------------------------------------------------ */
 #define OMNIS_TELEMETRY_ENABLED         1
 
+/* --- Telemetry while balancing -------------------------------------------
+ * 0: no status lines while armed in balance mode — a blocking log line every
+ *    second is a periodic disturbance to a balance loop. A one-line summary
+ *    (time balanced, peak lean) prints on disarm instead.
+ * 1: keep printing; useful while tuning on a tether.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_TELEMETRY_IN_BALANCE      0
+
+/* --- Live kp tuning knob --------------------------------------------------
+ * 1: the S1 slider (params.channel_map.tune_pot) sets the balance kp live,
+ *    from 0 to params.balance.tune_kp_max, so a kp search needs no reflash per
+ *    attempt. Telemetry prints the slider's kp while disarmed. Balance arming is
+ *    allowed whenever tune_kp_max > 0 in this mode, so START WITH THE SLIDER AT
+ *    ZERO. See TESTING.md, Stage 7.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_TUNE_KP_FROM_POT          0
+
 #endif /* OMNIS_CONFIG_H */

@@ -19,6 +19,7 @@ idf_component_register(
         "buzzer_pattern.c"
         "buzzer.c"
         "supervisor.c"
+        "balance.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_driver_gpio

@@ -98,6 +98,19 @@ void omnis_params_defaults(omnis_params_t *p)
     p->balance.lean_limit_rad = 0.10472f;   /* 6 degrees */
     p->balance.vel_bias_gain  = 0.0f;
 
+    /* Stage 7 balance limits. max_wheel_accel 60 000 steps/s^2 is ~3.5 m/s^2 at
+     * the 30 mm wheel rim — enough to recover from ~20 deg of lean, and about the
+     * most a NEMA17 on 12 V delivers without skipping. tilt_fault 35 deg: past it
+     * the robot has fallen or been grabbed. The rest are gentle first-test values.
+     * Gains stay ZERO: TESTING.md Stage 7 is the tuning procedure. */
+    p->balance.max_wheel_accel    = 60000.0f;
+    p->balance.stick_lean_max_rad = 0.0523599f;   /* 3 deg  */
+    p->balance.turn_max_steps     = 600.0f;
+    p->balance.outer_period_s     = 0.05f;        /* 20 Hz  */
+    p->balance.output_invert      = false;
+    p->balance.tilt_fault_rad     = 0.6108652f;   /* 35 deg */
+    p->balance.tune_kp_max        = 0.0f;
+
     /* --- IMU -------------------------------------------------------------
      * disagree 15 deg: omnis-info.md §11c.
      * comm_fail 25 reads: 50 ms at 500 Hz. Long enough to ride out a single
@@ -231,6 +244,16 @@ bool omnis_params_valid(const omnis_params_t *p)
         !(p->safety.upright_min_rad > p->safety.arm_flat_max_tilt_rad) ||
         p->safety.upright_min_rad > 1.5708f || p->safety.overrun_window_ticks == 0u ||
         p->safety.overrun_fault_count == 0u) {
+        return false;
+    }
+
+    const omnis_balance_t *b = &p->balance;
+    if (!(b->kp >= 0.0f) || !(b->ki >= 0.0f) || !(b->kd >= 0.0f) ||
+        !(b->integral_max >= 0.0f) || !(b->max_wheel_accel > 0.0f) ||
+        !(b->lean_limit_rad > 0.0f) || !(b->stick_lean_max_rad >= 0.0f) ||
+        !(b->turn_max_steps >= 0.0f) || !(b->outer_period_s > 0.0f) ||
+        !(b->tilt_fault_rad > b->lean_limit_rad) || b->tilt_fault_rad > 1.5708f ||
+        !(b->tune_kp_max >= 0.0f)) {
         return false;
     }
 

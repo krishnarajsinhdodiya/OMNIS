@@ -83,7 +83,14 @@ typedef struct {
     float integral_max;
     float trim_rad;            /**< §7d's trim pot: static lean-target offset */
     float lean_limit_rad;      /**< outer loop's clamp                       */
-    float vel_bias_gain;
+    float vel_bias_gain;       /**< outer loop gain; 0 = off (PLAN.md 1c)    */
+    float max_wheel_accel;     /**< PID output clamp [steps/s^2]             */
+    float stick_lean_max_rad;  /**< full pitch stick -> this lean target     */
+    float turn_max_steps;      /**< full roll stick -> this differential     */
+    float outer_period_s;      /**< outer loop period [s]                    */
+    bool  output_invert;       /**< flip the controller; see balance.h       */
+    float tilt_fault_rad;      /**< |lean| past this while balancing = fell  */
+    float tune_kp_max;         /**< S1 slider range with OMNIS_TUNE_KP_FROM_POT */
 } omnis_balance_t;
 
 /** IMU health, calibration and attitude-fault limits (omnis-info.md §11c, §12). */

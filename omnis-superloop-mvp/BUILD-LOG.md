@@ -842,3 +842,120 @@ seen, the robot just cannot arm (NO_LINK); after, losing it disarms and double-c
   switch; mechanically abrupt at speed.
 - The motors hold current whenever 12 V is present — hardware, not firmware (EN#).
 - No battery cutoff: battery sensing is out of MVP scope.
+
+---
+
+## 2026-09-16 — Stage 7: balance controller and full integration
+
+**Built:**
+
+| File | What it does |
+|---|---|
+| `main/balance.{c,h}` | Lean PID in the balance frame -> grounded-pair wheel rates |
+| `main/main.c` | Frame switching on arm/disarm, balance path, balance tilt fault, disarm summary |
+| `main/omnis_params.*` | `balance` block extended: accel clamp, stick mapping, tilt limit, invert, tuning range |
+| `main/omnis_config.h` | `OMNIS_TELEMETRY_IN_BALANCE`, `OMNIS_TUNE_KP_FROM_POT` |
+| `test/test_balance.c` | 28 assertions, including a closed-loop inverted-pendulum simulation |
+
+**Result:** normal build clean, zero warnings, 244 KB (77% free). A build with all
+three optional switches on (bench pattern, live kp tuning, telemetry in balance)
+also compiles clean. Host tests: **7 suites, 463 assertions, 0 failures.**
+No-RTOS compliance re-checked: 44 source files clean, and none of the 185 undefined
+symbols in `libmain.a` is a FreeRTOS symbol.
+
+### The wheel sign — and an error caught while deriving it
+
+The kinematics' `+omega` is "the sense that drives the robot forward when flat".
+What that does when the robot is standing on two wheels depends on where the ground
+contact sits relative to the axle, and it is **not the same for the two pairs**.
+
+For rolling without slip the centre moves opposite to the contact point's tangential
+velocity, `omega x r`:
+
+| Pose | ground at | `omega x r` | centre moves |
+|---|---|---|---|
+| flat | body −Z | `(−wR, 0, 0)` | +X — forward, by definition |
+| front pair down | body **+X** | `(0, 0, −wR)` | +Z = **+X′**, toward the top face |
+| rear pair down | body −X | `(0, 0, +wR)` | −Z = **−X′**, away from it |
+
+So `sigma = +1` on the front pair and `−1` on the rear.
+
+**My first derivation put the front-pair contact at body −X and concluded `+omega`
+drove the robot backward on both pairs.** Nose-down 90° puts +X *down*, so the
+contact is at +X. Caught by re-deriving from the rotation matrix before any of it
+reached a file. The corrected sign is one factor, applied in one place, with the
+whole derivation written out in `balance.h` — because if it is wrong on the real
+robot, the symptom (wheels driving away from the fall) looks identical to a
+controller sign error, and the two have completely different fixes.
+
+Left/right flips too: with `+X′` on the top face and `+Z′` up, the robot's left is
+`+Y′`, which is `+Y` on the front pair but `−Y` on the rear. Balancing on the rear
+pair, the "left" wheel is **RR**.
+
+### Evidence
+
+`test_balance.c` runs a real closed loop: an inverted pendulum whose cart
+acceleration comes from the commanded wheel rates through the rolling relation
+above, written out a second time in the test independently of
+`balance_pair_sign()`.
+
+| Case | Result |
+|---|---|
+| Released at 3°, front pair | recovers to 0.00°, peak lean 3.00°, peak wheel 1522 steps/s |
+| Released at 3°, rear pair | recovers to 0.00° — the sign flip is exercised |
+| Released at −3° | recovers |
+| `output_invert` on a correct robot | **falls** (>30°) — the sign genuinely matters |
+| Zero gains | **falls** — which is why the supervisor refuses to arm them |
+
+What this cannot prove is that the derivation matches the physical robot. That is
+the bench sign check in TESTING.md §7.3, and it is why `output_invert` exists —
+with an explicit warning that if only *one* pair is wrong, the flag is the wrong
+fix.
+
+### Design decisions and why
+
+**Arming balance switches the estimation frame, then waits.** On the arming tick
+the filters are re-seeded in the balance frame (their flat-frame angles mean nothing
+there) and `ARMED-BAL-SETTLE` holds the wheels still for 400 ms — two EKF time
+constants — before the controller drives.
+
+**The balance tilt fault is gated on the frame having actually switched.** On the
+arming tick the estimate is still flat-frame, where standing upright reads ~85°;
+without that gate every balance arm would instantly fault with TILT.
+
+**No slew limiter in the balance path.** The controller already limits acceleration
+through its PID output clamp, and a second rate limit is just added lag, which
+destabilises a balancer. The flat path keeps its slew limiter, where smoothness
+matters and phase margin does not.
+
+**The deadband still applies.** A wheel dithering across zero chatters its DIR line
+(kinematics reference §6), and a balancing robot sits near zero speed constantly.
+
+**Telemetry goes silent while balancing.** A blocking log line every second is a
+periodic disturbance to the loop. One summary prints on disarm — time balanced,
+peak lean, final speed — and `OMNIS_TELEMETRY_IN_BALANCE` restores the stream for
+tuning.
+
+**Live kp tuning uses `balance_set_kp()`, not `balance_init()`**, because re-initialising
+mid-balance clears the integrators and the forward speed, which is a fall.
+
+**The outer velocity-bias loop is wired but off** (`vel_bias_gain = 0`), matching
+PLAN.md decision 1c. Enabling it is a parameter change, not a code change.
+
+### A test assertion that was wrong
+
+The first version asserted that full forward stick "commands forward acceleration",
+and passed only because it tested for non-zero. The truth is the opposite and more
+interesting: from upright, the base must first move **backward** for the robot to
+tip forward — a controlled fall is non-minimum-phase. The assertion now checks
+`last_accel < 0` and says why.
+
+### Known limitations
+
+- **Reversal dead time (~8 ms)** while queued pulses drain. Balancing in place
+  reverses often; if the robot hunts around upright, suspect this first.
+- **Mecanum crab:** two grounded mecanum wheels driven differentially produce yaw
+  *and* some sideways force, so turning while balancing drifts laterally.
+- **No encoders**, so the robot will drift across the room (§13a). The outer loop is
+  the mitigation, and it is off by default.
+- **Every balance gain is unknown** until the robot is on a tether.
