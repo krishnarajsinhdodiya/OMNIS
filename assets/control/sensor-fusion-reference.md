@@ -97,8 +97,13 @@ Both are component-side up, so `+Z` is unchanged and the correction is a pure
 
 Recorded in [`omnis_imu_mounting.h`](omnis_imu_mounting.h), which also carries
 the chassis diagram and the corner labelling that follows from the front edge
-(FL = front-left, matching the `δ = -1` roller pair in
-`mecanum-kinematics-reference.md` §4).
+(FL = front-left, the same labels used in `mecanum-kinematics-reference.md` §4).
+
+The two IMUs sit on the **FL/RR diagonal**. Under the old X-drive roller layout
+that diagonal was also a roller-handedness pair; under the as-built lateral
+parallel layout it is not — the `δ = -1` pair is the LEFT SIDE, FL and RL.
+Nothing here ever depended on the coincidence, and it is mentioned only because
+an earlier edition of this paragraph asserted it.
 
 These constants read the marked arrow on each module as its sensor **+X** axis.
 **Do not rely on that reading — derive it.** `imu_mount_resolve()` recovers the
