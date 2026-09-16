@@ -392,32 +392,78 @@ Derived, verified and implemented. Full material lives in **`assets/kinematics/`
 | `mecanum-kinematics-code-explained.md` | Line-by-line walkthrough |
 | `mecanum_kinematics.{c,h}` | Implementation — clamp, deadband, null-space slip metric |
 
+### Wheel layout — lateral parallel rollers, NOT an X-drive
+
+Mounting-shaft and motor constraints put the **same roller tilt on both left
+wheels** and the mirrored tilt on **both right wheels**:
+
+```
+        FL  /                 \  FR          left  pair  FL, RL  ->  δ = -1
+        RL  /                 \  RR          right pair  FR, RR  ->  δ = +1
+```
+
+The textbook mecanum matrix (shared tilts on the diagonals) does **not** describe
+this robot. The equations below were re-derived from first principles for this
+layout, not sign-flipped from the standard ones.
+
 ### The equations
 
 ```
-k = (wheelbase_mm + track_width_mm) / 2            "yaw lever arm"
+k = (wheelbase_mm + track_width_mm) / 2        FRONT pair yaw lever
+m = (wheelbase_mm - track_width_mm) / 2        REAR  pair yaw lever
 
 ω_FL = ( vx - vy - k*w ) / wheel_radius_mm
 ω_FR = ( vx + vy + k*w ) / wheel_radius_mm
-ω_RL = ( vx + vy - k*w ) / wheel_radius_mm
-ω_RR = ( vx - vy + k*w ) / wheel_radius_mm
+ω_RL = ( vx - vy + m*w ) / wheel_radius_mm
+ω_RR = ( vx + vy - m*w ) / wheel_radius_mm
 
 f_i  = ω_i * STEPS_PER_RAD,   STEPS_PER_RAD = 3200/(2π) = 509.295818
 ```
 
-Strafe splits along **diagonals** (FL/RR vs FR/RL); rotation splits along
-**sides** (FL/RL vs FR/RR).
+Strafe splits along **sides** (left pair vs right pair), all four at equal
+magnitude. Rotation splits along sides too — but with the front pair **64.7×**
+the rear, so the two motions are distinguished by that ratio rather than by
+their sign pattern.
+
+Forward kinematics, in the two axle differentials `Δ_F = ω_FL − ω_FR` and
+`Δ_R = ω_RL − ω_RR`:
+
+```
+vx = (r/4) * ( ω_FL + ω_FR + ω_RL + ω_RR )
+vy = (r / (4L)) * ( (W - L)*Δ_F - (W + L)*Δ_R )
+w  = (r / (2L)) * ( -Δ_F + Δ_R )
+```
+
+**Yaw is the difference of the axle differentials; strafe is their weighted
+sum.** The X-drive had it the other way round. The slip metric
+`(+ω_FL + ω_FR − ω_RL − ω_RR)` is **unchanged** — it annihilates all three
+motion columns for either handedness and any geometry.
 
 ### Geometry — OMNIS as-built
 
 `wheel_radius_mm = 30`, `wheelbase_mm = 223`, `track_width_mm = 230`
-→ `k = 226.5 mm`, `k/r = 7.55`.
+→ `k = 226.5 mm`, `m = -3.5 mm`, `k/r = 7.55`, `|k/m| = 64.7`.
 
 Kept as named parameters (§9f `geometry` block), never inline in the formulas.
+The four roller-handedness signs live in `MECANUM_DELTA_*` and are the only
+statement of the layout; both lever arms are computed from them.
 
-**Bench test:** command `vx = vy` (diagonal forward-left). FL and RR must be
-completely stationary. If they creep, a roller handedness assignment or a `DIR`
-invert flag is wrong.
+**What the layout costs, and what it does not.** Still fully holonomic —
+`det(MᵀM) = 4L²`, non-zero for any real chassis. Peak wheel rate per unit of
+commanded motion is unchanged, so top speed, strafe speed and yaw rate are all
+the same as an X-drive's. What it costs is odometry precision: the strafe and
+yaw columns meet at 44.1° instead of 90°, amplifying per-wheel error by **1.44×
+on `vy` and 2.03× on `w`**.
+
+**Bench test — run both directions.** Command `vx = vy` (diagonal forward-left):
+both **left** wheels must be completely stationary. Then `vx = -vy`: both
+**right** wheels must be. Correct side both times → handedness is right; the
+other side → negate all four `MECANUM_DELTA_*` together; a *diagonal* pair →
+the wheels are not in the parallel layout at all.
+
+**Expected, not a fault:** a pure spin turns the rear wheels at 1.5% of the
+front pair's rate, and below ≈0.34 rad/s of commanded yaw the deadband holds
+them completely still while the front pair drives.
 
 
 ---

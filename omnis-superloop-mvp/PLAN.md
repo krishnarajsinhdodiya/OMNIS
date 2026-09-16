@@ -55,8 +55,16 @@ identical across the kinematics and control code.
 
 The two modules are **antiparallel**; the 180° correction must be applied before
 the EKF or the 15° disagreement fault fires at every boot. Wheel labelling
-follows from the front edge: FL = front-left, and FL/RR are the `δ = -1` roller
-pair.
+follows from the front edge: FL = front-left.
+
+> **Superseded 2026-09-16.** This paragraph originally continued "…and FL/RR are
+> the `δ = -1` roller pair", which was true of the X-drive layout assumed at
+> planning time. The as-built wheels are in the **lateral parallel** layout: the
+> `δ = -1` pair is the LEFT SIDE, FL and RL. The kinematics were re-derived from
+> first principles rather than sign-flipped — see
+> [`../assets/kinematics/mecanum-kinematics-derivation.md`](../assets/kinematics/mecanum-kinematics-derivation.md)
+> and BUILD-LOG's 2026-09-16 entry. Nothing else in this plan is affected: the
+> IMU mounting, the stage definitions and every decision below stand.
 
 ### In scope
 | # | Item |
@@ -360,8 +368,13 @@ values on the monitor, and switching the TX off raises the timeout fault within
   the failsafe path.
 
 **Done when:** commanding `vx=200` spins all four the same way at a scope-verified
-3395 Hz, and `vx=vy` leaves FL and RR completely stationary — the bench test the
-reference §4 calls for.
+3395 Hz, and `vx=vy` leaves the whole **left side** (FL and RL) completely
+stationary while `vx=-vy` leaves the right side stationary — the two-direction
+bench test the reference §4 calls for.
+
+> Amended 2026-09-16: originally "leaves FL and RR stationary", which was the
+> X-drive test. The as-built wheels are in the lateral parallel layout, so the
+> idle pair is a side. See BUILD-LOG's 2026-09-16 entry.
 
 ### Stage 6 — Fault state machine + buzzer
 

@@ -1017,3 +1017,130 @@ sensing — and the custom RTOS layer itself. Every pure module here (kinematics
 EKF, fusion, PID, balance, CRSF parser, fault/supervisor logic, waveform
 generator) has no ESP-IDF dependency and carries over unchanged; only the glue
 (`main.c`, `imu.c`, `crsf.c`, `step_gen.c`, `buzzer.c`) is superloop-shaped.
+
+---
+
+## 2026-09-16 — Wheel layout change: kinematics re-derived for parallel rollers
+
+The wheels turned out **not** to be in the X-drive arrangement every document in
+this repository had assumed. Mounting-shaft and motor constraints put the same
+roller tilt on **both left wheels** and the mirrored tilt on **both right
+wheels**:
+
+```
+        FL  /                 \  FR          left  pair  FL, RL  ->  δ = -1
+        RL  /                 \  RR          right pair  FR, RR  ->  δ = +1
+```
+
+### Re-derived, not sign-flipped
+
+The temptation with a change like this is to flip signs until the bench test
+passes. That was rejected: the `vy` signs and the yaw lever arms both descend
+from the same `δ_i`, so patching one column by hand produces a matrix that is
+not the kinematics of any physical robot, and the error only shows up later as
+drift. The derivation was redone from the rigid-body contact-patch velocity
+onward.
+
+The general per-wheel constraint survived untouched:
+
+```
+r*ω_i  =  vx  +  δ_i*vy  +  w*(δ_i*x_i − y_i)
+```
+
+Everything specific to the robot is now **which four signs go into δ**, and the
+firmware mirrors that: `MECANUM_DELTA_FL` … `MECANUM_DELTA_RR` are the only
+statement of the layout, and both lever arms are computed from them by
+`mecanum_yaw_levers()`. A mirrored build is a four-line change; a half-applied
+mirror is not expressible.
+
+### What actually moved
+
+| | Was (X-drive) | Now |
+|---|---|---|
+| Shared tilt | FL+RR, FR+RL | **FL+RL, FR+RR** |
+| Yaw lever | `±k` on all four | **`±k` front, `±m` rear**, `k=(L+W)/2`, `m=(L−W)/2` |
+| Rear IK rows | `vx + vy ∓ k*w` | **`vx − vy ± m*w`** |
+| Strafe pattern | diagonals | **sides**, equal magnitude |
+| Bench idle test | `vx=vy` idles FL and RR | **idles the whole LEFT SIDE** |
+| `MᵀM` | diagonal | **not diagonal** — `c_vy · c_w = 2W` |
+| FK yaw scale | `r/(2(L+W))` | **`r/(2L)`** — track width drops out |
+| FK structure | yaw ← sides, strafe ← diagonals | **yaw ← Δ_F − Δ_R, strafe ← weighted Δ_F + Δ_R** |
+
+**Only the rear pair changed.** Both front-wheel equations are identical to the
+previous edition, which was the fastest way to check the port had been applied
+consistently rather than half-applied.
+
+### Three results worth recording
+
+**The layout is holonomic for every real chassis.** Working the pseudoinverse
+through gives `det(MᵀM) = 4L²` — the track width cancels completely. There is no
+aspect ratio, square included, at which this drivetrain loses a degree of
+freedom. That matters because the rear yaw lever `(L−W)/2` is only −3.5 mm on
+this frame and *looks* singular; it is not. The rear pair stops contributing to
+yaw at `L = W` while still contributing to strafe, and rank is preserved.
+
+**It costs nothing in performance and something in precision.** The peak wheel
+rate per unit of commanded motion is identical to the X-drive on all three axes,
+so the same step-rate ceiling buys the same top speed, strafe speed and yaw
+rate — this was checked rather than assumed, and is now a test. What it costs is
+odometry: the strafe and yaw columns meet at 44.1° instead of 90°, amplifying
+per-wheel error by **1.44× on `vy` and 2.03× on `w`**.
+
+**The null space did not move.** `(+1, +1, −1, −1)` still annihilates all three
+motion columns — the solve uses only `k ≠ m`, i.e. `W ≠ 0`, so it holds for
+either handedness and any geometry. `mecanum_null_space()` needed no edit at all
+and the health metric keeps its meaning. Of everything here that was the one
+pleasant surprise.
+
+### Verification
+
+- The closed-form pseudoinverse was checked against `(MᵀM)⁻¹Mᵀ` computed in
+  **exact rational arithmetic**, for both handedness signs and four geometries
+  (223×230, 300×200, 250×250 square, 100×400). Every coefficient matched
+  exactly, with no floating point in the comparison. Doing this before writing
+  the closed form into the code and three documents was the right order — the
+  hand algebra had already produced one wrong intermediate (`2(k+m)` where the
+  dot product is `2(k−m)`), which the check would have caught had the prose
+  survived that far.
+- `test_kinematics.c` gained a layout-properties section: per-axis round trips
+  (a rank-deficient layout fails only one axis, so a combined test can mask it),
+  the lever identities `κ_F + κ_R = −W` and `κ_F − κ_R = −L`, the 64.7:1 ratio,
+  the square-frame zero and the sign flip at `L > W`, the non-orthogonality
+  `c_vy · c_w = 2W = 460`, and the unchanged null space asserted against the
+  columns themselves rather than against commands the IK happened to produce.
+- The boot self-check now asserts the rear pair at ±59.418 steps/s for a 1 rad/s
+  spin. **An X-drive build would show ±3845 on all four**, so that one line
+  catches a stale port on the hardware.
+- Both diagonals are now bench-tested. `vx = vy` idles the left side and
+  `vx = −vy` idles the right; running *both* is what separates "handedness
+  correct" from "handedness mirrored", since a mirrored build passes one and
+  fails the other.
+
+### The convention problem, stated honestly
+
+A roller glyph `/` or `\` can mean the roller's **axis** or its **rolling
+direction**, and the two readings are mirror images. Picking one consistently is
+not the same as being right about the hardware, and the difference is not
+academic — it flips which way the robot strafes.
+
+The derivation now fixes the convention explicitly in §2 (the glyph is the
+**axis**, seen from above, robot facing up the page, body +y to the page-left)
+and §5.3 carries the bench test that settles it on the physical robot, along
+with the exact four-constant fix. This is deliberately *not* left as a judgement
+call in prose: the code has one place to change and the test has a
+pass/fail answer.
+
+### Documents rewritten
+
+All three kinematics documents were rewritten rather than patched —
+`derivation.md` (second edition, re-derived from §4 onward, with a new §9.3 on
+conditioning and a §13 reviewer's checklist of what moved), `reference.md`, and
+`code-explained.md` (whose verification transcript is now real output from the
+shipped source). `TESTING.md` Stages 5.1 and 7.1, both copies of `omnis-info.md`,
+`omnis_imu_mounting.h` (the IMUs sit on the FL/RR diagonal, which *was* a
+handedness pair and is not one now), the root `README.md` and `PLAN.md`'s
+corner-labelling note were all brought into line.
+
+`OPERATIONS_GUIDE.md` was added in the same pass: build and flash, the superloop
+walkthrough, a file-by-file index of all 44 sources, and a tuning cheat sheet
+whose §4.2 is the "forward is right but strafe is backwards" procedure.

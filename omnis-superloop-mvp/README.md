@@ -12,6 +12,7 @@ learned and implemented. Deferred features are deferred, not abandoned.
 | Document | Read it for |
 |---|---|
 | **[TESTING.md](TESTING.md)** | Bench bring-up, stage by stage. **Start here before powering anything.** |
+| **[OPERATIONS_GUIDE.md](OPERATIONS_GUIDE.md)** | Build and flash, the superloop explained, a file-by-file index, and the tuning cheat sheet |
 | [PLAN.md](PLAN.md) | Scope, decisions and why, stage definitions |
 | [BUILD-LOG.md](BUILD-LOG.md) | The full history: what was built, what was learned, every bug found |
 | [omnis-info.md](omnis-info.md) | The project info file, updated for this build |
@@ -23,7 +24,7 @@ learned and implemented. Deferred features are deferred, not abandoned.
 | In scope | Where |
 |---|---|
 | 500 Hz loop: dual-MPU6050 attitude EKF, inverse-covariance fusion, 15° disagreement fault | `imu.c`, `attitude_ekf.c`, `imu_fusion.c` |
-| Verified 4-wheel mecanum inverse / forward kinematics | `mecanum_kinematics.c`, `drive.c` |
+| 4-wheel mecanum IK/FK, re-derived for the **lateral parallel roller** layout | `mecanum_kinematics.c`, `drive.c` |
 | CRSF / ExpressLRS radio: throttle→vx, yaw→w, pitch+roll→vx/vy, arm, mode, speed | `crsf*.c`, `rc_input.c` |
 | STEP pulses for four A4988s on the RMT peripheral, nothing in the hot path | `step_wave.c`, `step_gen.c` |
 | Buzzer fault / failsafe signalling, arming supervisor | `fault.c`, `buzzer*.c`, `supervisor.c` |
@@ -67,6 +68,34 @@ exist only while armed. Read TESTING.md §0.
 
 ---
 
+## The wheel layout is not an X-drive
+
+Both left wheels carry the same roller tilt and both right wheels the mirror:
+
+```
+        FL  /                 \  FR          left  pair  FL, RL  ->  δ = -1
+        RL  /                 \  RR          right pair  FR, RR  ->  δ = +1
+```
+
+So the standard mecanum matrix does not apply. The kinematics were re-derived
+from first principles ([derivation](../assets/kinematics/mecanum-kinematics-derivation.md)).
+What changes in practice:
+
+- **Strafe splits along the sides**, not the diagonals. `vx = vy` idles the whole
+  **left side**; `vx = -vy` idles the right.
+- **The front axle carries 98.5% of the yaw authority** (lever ratio 64.7:1), so
+  during a spin the rear wheels crawl and, below ≈0.34 rad/s, the deadband holds
+  them still. Correct, not a dead motor.
+- Still fully holonomic, and **no slower** — same top speed, strafe speed and yaw
+  rate. The cost is odometry precision: 1.44× on `vy`, 2.03× on `w`.
+
+The layout lives in four constants (`MECANUM_DELTA_*` in `mecanum_kinematics.h`).
+If forward motion is right but strafe is backwards, negate all four together —
+never reach for a `dir_invert` flag. [OPERATIONS_GUIDE.md §4.2](OPERATIONS_GUIDE.md)
+has the test that tells those two failures apart.
+
+---
+
 ## Layout
 
 ```
@@ -83,7 +112,7 @@ omnis-superloop-mvp/
     imu_fusion.{c,h}    │    byte-identical to assets/control/
     pid.{c,h}           │
     omnis_imu_mounting.h┘
-    mecanum_kinematics.{c,h} byte-identical to assets/kinematics/
+    mecanum_kinematics.{c,h} byte-identical to assets/kinematics/; parallel-roller IK/FK
     drive.{c,h}              sticks → wheel rates, slew limiter
     crsf_parser.{c,h}        pure CRSF parser
     crsf.{c,h}               UART glue, RX-pin auto-detect
@@ -124,6 +153,9 @@ cd /Volumes/Projects/OMNIS && idf.py -C omnis-superloop-mvp -p /dev/cu.usbmodem1
 ```bash
 cd /Volumes/Projects/OMNIS/omnis-superloop-mvp && ./test/run_host_tests.sh
 ```
+
+Full instructions, including the ESP-IDF activation quirk and what to do when
+flashing will not connect, are in [OPERATIONS_GUIDE.md §1](OPERATIONS_GUIDE.md).
 
 ---
 

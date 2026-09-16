@@ -1,17 +1,26 @@
 # ESP32-S3 / ESP-IDF Command Reference (OMNIS)
 
-Quick lookup, not a tutorial. Assumes native macOS install at `~/esp/esp-idf`, project at
-`/Volumes/Projects/OMNIS`. See `phase0-toolchain-environment.md` for the setup story and
-gotchas behind these commands.
+Quick lookup, not a tutorial. Assumes the native macOS **ESP-IDF v6.0.2** install at
+`~/.espressif/v6.0.2/esp-idf`, project at `/Volumes/Projects/OMNIS`. See
+`phase0-toolchain-environment.md` for the setup story and gotchas behind these commands,
+including §9's post-mortem of the v5.3.1 → v6.0.2 migration.
 
 ## Every new terminal session — do this first
 
 ```bash
-get_idf              # alias for: . ~/esp/esp-idf/export.sh
-idf.py --version      # sanity check — should print: ESP-IDF v5.3.1
+. ~/.espressif/tools/activate_idf_v6.0.2.sh
 ```
+
+```bash
+idf.py --version      # sanity check — should print: ESP-IDF v6.0.2
+```
+
 Required once per terminal tab/window/SSH session. Not persistent, not global — see
 Phase 0 doc §4 for why.
+
+> **Use the activation script, not `export.sh`.** `export.sh` looks for a Python 3.11
+> virtualenv while this install runs on 3.14, so it fails where the activation script
+> works. The old `get_idf` alias pointed at the removed v5.3.1 tree — drop it.
 
 ---
 

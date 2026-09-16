@@ -10,7 +10,7 @@ Status markers used below:
 
 | | VS Code Devcontainer (`.devcontainer/`) | Native macOS install |
 |---|---|---|
-| IDF version | v6.1-dev (dev branch) | v5.3.1 (stable) |
+| IDF version | v6.1-dev (dev branch) | **v6.0.2** (stable) — was v5.3.1 until the §9 migration |
 | Can reach physical EdgeHax S3 Pro board? | **No** — no `/dev/ttyUSB*`/`/dev/ttyACM*` passthrough configured, only Linux virtual consoles | Yes, via macOS `/dev/cu.*` |
 | Purpose | QEMU emulation (`qemu-system-xtensa` is installed), isolated FreeRTOS experiments | Primary environment — all real hardware work: build, flash, monitor |
 | Requires | Docker Desktop running + "Dev Containers" extension (`ms-vscode-remote.remote-containers`) installed | Nothing beyond steps below |

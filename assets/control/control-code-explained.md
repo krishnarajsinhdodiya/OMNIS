@@ -80,7 +80,7 @@ imu_fusion_result_t fused;
 imu_fusion_combine(&ekf_a, &ekf_b, IMU_DISAGREE_THRESH_RAD, &fused);
 
 if (fused.fault) {
-    fault_raise(FAULT_IMU_DISAGREE);          /* -> COM_ENA off, buzzer */
+    fault_raise(FAULT_IMU_DISAGREE);          /* -> STEP pulses stop, buzzer */
     return;                                   /* before any motor command */
 }
 

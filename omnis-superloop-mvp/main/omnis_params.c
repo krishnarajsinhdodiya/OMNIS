@@ -52,6 +52,11 @@ void omnis_params_defaults(omnis_params_t *p)
      *             combined commands.
      *   pure w:   f = k*w * 509.2958 / r = 7.55 * 509.2958 * w = 3845 * w
      *             7000 / 3845 = 1.82 rad/s, so 1.5 leaves headroom.
+     *             k here is the FRONT pair's yaw lever, which is the one that
+     *             saturates: under the parallel roller layout the rear pair's
+     *             lever is (L-W)/2 = -3.5 mm, so it runs at 1.5% of this and
+     *             never reaches the clamp first. The ceiling is unchanged from
+     *             the X-drive layout for exactly that reason.
      *
      * Unverified on hardware — see PLAN.md open question 6.
      * ------------------------------------------------------------------- */

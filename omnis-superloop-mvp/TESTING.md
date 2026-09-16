@@ -87,7 +87,7 @@ The control modules also have their own suite in `assets/control/`
 **Pass:**
 
 ```
-I (xx) omnis: kinematics self-check (cases A-D, round trip, null space, diagonal): PASS
+I (xx) omnis: kinematics self-check (cases A-D, round trip, null space, side idle): PASS
 I (xx) tick: 500 Hz tick running (period 2000 us)
 ```
 
@@ -262,15 +262,35 @@ USB connected.
 |---|---|
 | FORWARD 200 mm/s | **all four roll forward** — the top of each wheel moves toward the OLED end |
 | BACKWARD 200 mm/s | all four roll backward |
-| STRAFE LEFT | FL and RR backward; FR and RL forward |
-| ROTATE CCW | both left wheels backward; both right wheels forward |
-| DIAGONAL vx=vy | FR and RL forward; **FL and RR completely still** |
+| STRAFE LEFT | **both left wheels backward; both right wheels forward**, all four at the same speed |
+| ROTATE CCW | both left wheels backward, both right forward — but **the front pair spins fast (~3845 Hz) and the rear pair only crawls (~59 Hz)** |
+| DIAGONAL vx=vy | FR and RR forward; **FL and RL completely still** |
+| ANTI-DIAGONAL vx=−vy | FL and RL forward; **FR and RR completely still** |
+
+> **The rear pair crawling during ROTATE is correct**, not a stuck motor. Under
+> the lateral parallel roller layout the rear wheels' yaw lever is 1.5% of the
+> front's, so a spin is absorbed almost entirely by the rear rollers. If all
+> four wheels spin equally fast, the build is running **stale X-drive
+> kinematics** — check that `main/mecanum_kinematics.h` has
+> `MECANUM_DELTA_RL == MECANUM_DELTA_FL`.
 
 ### 5.1 Fixing directions
 
+Work in this order. Forward motion does not involve roller handedness at all,
+so it must be right before any of the other rows mean anything.
+
 - **A wheel runs backward in FORWARD:** flip that wheel's `p->motor.dir_invert[i]`
   in `omnis_params.c` (order `[FL, FR, RL, RR]`). Never fix it in the kinematics.
-- **FL or RR creep during DIAGONAL:** a DIR flag is wrong — fix FORWARD first.
+- **The WRONG SIDE stands still in the two diagonal segments** — right side still
+  on `vx=vy`, left side still on `vx=−vy` — and FORWARD was correct: the roller
+  handedness is mirrored from what the code assumes. Negate **all four**
+  `MECANUM_DELTA_*` constants in `main/mecanum_kinematics.h` together and
+  rebuild. Do not touch a `dir_invert` flag for this; see OPERATIONS_GUIDE §4.2.
+- **A DIAGONAL pair stands still** (FL+RR or FR+RL) rather than a side: the
+  wheels are not in the parallel layout at all, and the derivation does not
+  describe this robot.
+- **One wheel creeps during a DIAGONAL segment** while its partner is still: a
+  DIR flag is wrong — fix FORWARD first.
 - The status lines add `step: pulses N underruns 0 submit-fail 0`. **Both counters
   must stay 0.** Non-zero underruns mean the superloop is starving the step queue
   (check `ovr`).
@@ -355,11 +375,17 @@ Arm and check, gently:
 | throttle forward | drive toward the OLED end |
 | right stick left | **strafe** left, without turning |
 | rudder left | **rotate** anticlockwise (seen from above) in place |
-| right stick diagonal forward-left | move diagonally; FL and RR stay still |
+| right stick diagonal forward-left | move diagonally; **FL and RL** stay still |
 
 - **Strafe goes right when it should go left** (and forward was correct): the
-  mecanum wheels are mounted mirrored. Swap the wheels FL↔FR and RL↔RR — do not
-  edit the kinematics (reference §4).
+  roller handedness is mirrored from what the code assumes. Negate all four
+  `MECANUM_DELTA_*` constants in `main/mecanum_kinematics.h` together and
+  rebuild — a four-line change (reference §4, OPERATIONS_GUIDE §4.2). Swapping
+  the physical wheels left-to-right is the other valid fix; do not do both.
+- **Rotation feels weak or the robot crabs while turning:** expected to a
+  degree. Only the front pair contributes meaningfully to yaw under this
+  layout, so yaw torque is roughly half an X-drive's. It is a force effect, not
+  a kinematics error — the commanded yaw *rate* is still exact.
 - **Rotates the wrong way:** a stick polarity (`invert_yaw`) — Stage 4.1.
 - Raise to speed `MID`, then `HIGH`, only once `LOW` behaves.
 
