@@ -78,13 +78,13 @@ void omnis_params_defaults(omnis_params_t *p)
      * (roll), ch2 elevator (pitch), ch3 throttle, ch4 rudder (yaw). This map is
      * §9f's T-E-A-R order. Either reorder the mixer on the RadioMaster Pocket or
      * change these four numbers; TESTING.md Stage 4 has the check. */
-    p->channel_map.throttle          = 1;
+    p->channel_map.throttle          = 3;
     p->channel_map.pitch             = 2;
-    p->channel_map.roll              = 3;
+    p->channel_map.roll              = 1;
     p->channel_map.yaw               = 4;
-    p->channel_map.kill_switch       = 6;
-    p->channel_map.drive_mode        = 8;
-    p->channel_map.speed_limiter     = 9;
+    p->channel_map.kill_switch       = 8;
+    p->channel_map.drive_mode        = 5;
+    p->channel_map.speed_limiter     = 6;
     p->channel_map.tune_pot          = 10;
     p->channel_map.arm_switch_invert = false;
 
