@@ -14,9 +14,7 @@
  *      in software: whenever 12 V is present, all four motors are energised and
  *      holding. The firmware failsafe is therefore "stop generating STEP
  *      pulses" — the motors hold position, they do not go limp.
- *   2. Both MPU6050 INT pins share GPIO7 with a 10 k pull-up, which only works
- *      if both chips are configured open-drain (see PIN_IMU_INT).
- *   3. Buzzer moved 14 -> 16 (GPIO14 belongs to the onboard microSD).
+ *   2. Buzzer moved 14 -> 16 (GPIO14 belongs to the onboard microSD).
  *
  * The planning doc assets/pcb/rev2-pin-assignment.md disagrees with the final
  * schematic on seven nets. The schematic wins; the doc is older:
@@ -51,12 +49,12 @@
  * ------------------------------------------------------------------------ */
 #define PIN_FL_STEP             GPIO_NUM_4    /* FL_STEP */
 #define PIN_FL_DIR              GPIO_NUM_5    /* FL_DIR  */
-#define PIN_FR_STEP             GPIO_NUM_40   /* FR_STEP, MTDO */
+#define PIN_FR_STEP             GPIO_NUM_1   /* FR_STEP, MTDO */
 #define PIN_FR_DIR              GPIO_NUM_38   /* FR_DIR  */
 #define PIN_RL_STEP             GPIO_NUM_15   /* BL_STEP */
 #define PIN_RL_DIR              GPIO_NUM_46   /* BL_DIR, STRAPPING PIN */
 #define PIN_RR_STEP             GPIO_NUM_21   /* BR_STEP */
-#define PIN_RR_DIR              GPIO_NUM_42   /* BR_DIR, MTMS */
+#define PIN_RR_DIR              GPIO_NUM_2   /* BR_DIR, MTMS */
 
 /* Pin hazards worth knowing before a wheel misbehaves:
  *
@@ -79,17 +77,6 @@
 
 #define I2C_ADDR_IMU_A          0x68   /**< MPU1: AD0 low  */
 #define I2C_ADDR_IMU_B          0x69   /**< MPU2: AD0 high */
-
-/* --- Shared MPU6050 interrupt ---------------------------------------------
- * MPU1_INT and MPU2_INT are wired together onto GPIO7 with a 10 k (R3) pull-up
- * to 3V3. A wired-OR of two push-pull outputs fights and can damage both
- * chips, so BOTH MPU6050s must be configured open-drain, active-low
- * (INT_PIN_CFG = 0xC0) before anything enables their interrupt. The MVP firmware
- * configures that at boot, leaves the interrupt disabled, and polls the IMUs on
- * the 500 Hz tick instead. The line is reserved here for a future data-ready
- * trigger; nothing in this build reads it.
- * ------------------------------------------------------------------------ */
-#define PIN_IMU_INT             GPIO_NUM_7
 
 /* --- CRSF / ExpressLRS UART ----------------------------------------------
  * Rev 2.0 names these nets from the ESP32's point of view (Rev 1.0 used the
