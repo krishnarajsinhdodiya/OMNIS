@@ -503,14 +503,15 @@ void app_main(void)
         fault_set_condition(&s_faults, FAULT_RC_LINK, s_crsf_ok && crsf_ever_locked() && !link_ok);
 
         if (++ovr_block_ticks >= s_params->safety.overrun_window_ticks) {
-            if (supervisor_is_armed(&s_sup) &&
-                ovr_block_count >= s_params->safety.overrun_fault_count) {
-                fault_raise(&s_faults, FAULT_LOOP_OVERRUN);
-            }
-            ovr_block_ticks = 0u;
-            ovr_block_count = 0u;
-        }
-
+            #if !OMNIS_TEST_IGNORE_LOOP_OVERRUN_FAULT
+                if (supervisor_is_armed(&s_sup) &&
+                    ovr_block_count >= s_params->safety.overrun_fault_count) {
+                    fault_raise(&s_faults, FAULT_LOOP_OVERRUN);
+                }
+            #endif
+                ovr_block_ticks = 0u;
+                ovr_block_count = 0u;
+}
         if (s_sup.state == SUP_ARMED_FLAT && imu.valid &&
             (fabsf(imu.roll)  > s_params->imu.flat_tilt_fault_rad ||
              fabsf(imu.pitch) > s_params->imu.flat_tilt_fault_rad)) {

@@ -39,13 +39,14 @@ extern "C" {
 
 /* --- Fixed drivetrain constants -----------------------------------------
  * Hard-wired properties of the hardware, not runtime parameters.
- * A4988 MS1/MS2/MS3 are tied HIGH -> fixed 1/16 microstepping.
+ * A4988 is configured for FULL-STEP operation.
+ * MS1/MS2/MS3 are LOW / not asserted.
  * ------------------------------------------------------------------------ */
-#define MOTOR_FULL_STEPS_PER_REV   200.0f   /* 1.8 deg/step NEMA17-class    */
-#define A4988_MICROSTEPS            16.0f   /* MS1/MS2/MS3 = HIGH           */
+#define MOTOR_FULL_STEPS_PER_REV   200.0f   /* 1.8 deg/step NEMA17-class */
+#define A4988_MICROSTEPS             1.0f   /* Full-step operation       */
 #define MICROSTEPS_PER_REV   (MOTOR_FULL_STEPS_PER_REV * A4988_MICROSTEPS)
 
-/* rad/s -> microsteps/s. Exact given the two constants above: 3200/(2*pi). */
+/* rad/s -> full motor steps/s. */
 #define STEPS_PER_RAD        (MICROSTEPS_PER_REV / (2.0f * (float)M_PI))
 
 /* --- Roller handedness: the ONE place the wheel layout is stated ---------

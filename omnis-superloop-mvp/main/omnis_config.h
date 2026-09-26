@@ -10,6 +10,13 @@
 #ifndef OMNIS_CONFIG_H
 #define OMNIS_CONFIG_H
 
+/* --- Temporary motor-test override ---------------------------------------
+ * 1: keep measuring LOOP overruns but do not turn them into a fault.
+ *    TEMPORARY ONLY — restore to 0 after motor/RR testing.
+ * 0: normal safety behavior.
+ * ------------------------------------------------------------------------ */
+#define OMNIS_TEST_IGNORE_LOOP_OVERRUN_FAULT   1
+
 /* --- Loop rate -----------------------------------------------------------
  * 500 Hz per omnis-info.md §11d, verified on hardware in Stage 1 with zero
  * overruns and no measurable jitter. If the I2C reads in Stage 3 push the loop

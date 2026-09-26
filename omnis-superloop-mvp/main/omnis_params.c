@@ -132,7 +132,7 @@ void omnis_params_defaults(omnis_params_t *p)
      * flat tilt 45 deg: an armed robot in 4-wheel mode tipped this far has
      *   crashed, flipped, or is being picked up. Stop stepping.
      * ------------------------------------------------------------------- */
-    p->imu.disagree_thresh_rad     = 0.2617994f;   /* 15 deg */
+    p->imu.disagree_thresh_rad     = 0.1745329f,   // 10 deg temporary change back to 0.2617994f i.e. 15 deg
     p->imu.comm_fail_reads         = 25u;
     p->imu.frozen_reads            = 50u;
     p->imu.cal_samples             = 1000u;
