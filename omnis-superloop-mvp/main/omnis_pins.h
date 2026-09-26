@@ -49,7 +49,7 @@
  * ------------------------------------------------------------------------ */
 #define PIN_FL_STEP             GPIO_NUM_4    /* FL_STEP */
 #define PIN_FL_DIR              GPIO_NUM_5    /* FL_DIR  */
-#define PIN_FR_STEP             GPIO_NUM_1   /* FR_STEP, MTDO */
+#define PIN_FR_STEP             GPIO_NUM_40  /* FR_STEP, onboard orange LED */
 #define PIN_FR_DIR              GPIO_NUM_38   /* FR_DIR  */
 #define PIN_RL_STEP             GPIO_NUM_15   /* BL_STEP */
 #define PIN_RL_DIR              GPIO_NUM_46   /* BL_DIR, STRAPPING PIN */
