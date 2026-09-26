@@ -62,7 +62,8 @@
  *   doc advised never putting a STEP line on an LED pin; the final schematic
  *   does. It works — the LED adds ~1 mA and flickers with steps — but if the
  *   front-right wheel misbehaves at high step rates, suspect this first. An
- *   Espressif DevKitC-1 has no LED on GPIO40.
+ *   Espressif DevKitC-1 has no LED on GPIO40. GPIO1 is intentionally free for
+ *   the deferred B_UP button; it is not a motor pin on Rev 2.0.
  *
  * GPIO46 (RL_DIR) is a strapping pin sampled at reset. The A4988 DIR input has
  *   no pull of its own, so the chip's internal pull-down wins and the board
