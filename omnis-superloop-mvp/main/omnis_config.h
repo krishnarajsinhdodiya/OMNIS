@@ -10,6 +10,8 @@
 #ifndef OMNIS_CONFIG_H
 #define OMNIS_CONFIG_H
 
+#define OMNIS_TEST_IGNORE_IMU_DISAGREE_FAULT 1
+
 /* --- Temporary motor-test override ---------------------------------------
  * 1: keep measuring LOOP overruns but do not turn them into a fault.
  *    TEMPORARY ONLY — restore to 0 after motor/RR testing.

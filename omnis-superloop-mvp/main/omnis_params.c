@@ -70,8 +70,8 @@ void omnis_params_defaults(omnis_params_t *p)
      * Stage 4 — if a stick turns out reversed, flip it here, never in the IK. */
     p->rc_scale.invert_throttle   = false;
     p->rc_scale.invert_pitch      = false;
-    p->rc_scale.invert_roll       = false;
-    p->rc_scale.invert_yaw        = false;
+    p->rc_scale.invert_roll       = true;
+    p->rc_scale.invert_yaw        = true;
 
     /* --- CRSF channel map: §9f rc.channel_map, 1-based ------------------ */
     /* NOTE: EdgeTX's default channel order for a new model is AETR — ch1 aileron
@@ -80,8 +80,8 @@ void omnis_params_defaults(omnis_params_t *p)
      * change these four numbers; TESTING.md Stage 4 has the check. */
     p->channel_map.throttle          = 3;
     p->channel_map.pitch             = 2;
-    p->channel_map.roll              = 1;
-    p->channel_map.yaw               = 4;
+    p->channel_map.roll              = 4;
+    p->channel_map.yaw               = 1;
     p->channel_map.kill_switch       = 8;
     p->channel_map.drive_mode        = 5;
     p->channel_map.speed_limiter     = 6;

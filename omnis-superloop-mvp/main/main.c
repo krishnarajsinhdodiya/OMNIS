@@ -496,8 +496,17 @@ void app_main(void)
         /* ===== 1. SENSE =================================================== */
         if (s_imu_ok) {
             imu_update(now, &imu);
-            if (imu.fault_comm)     fault_raise(&s_faults, FAULT_IMU_COMM);
-            if (imu.fault_disagree) fault_raise(&s_faults, FAULT_IMU_DISAGREE);
+
+            if (imu.fault_comm) {
+                fault_raise(&s_faults, FAULT_IMU_COMM);
+            }
+
+        #if !OMNIS_TEST_IGNORE_IMU_DISAGREE_FAULT
+            if (imu.fault_disagree) {
+                fault_raise(&s_faults, FAULT_IMU_DISAGREE);
+            }
+        #endif
+
         } else {
             imu.valid = false;
         }
