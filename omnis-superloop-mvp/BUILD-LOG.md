@@ -370,8 +370,9 @@ all now reflected in code and docs:
 pull-up. That is only safe with both chips open-drain (`INT_PIN_CFG` = 0xC0),
 which Stage 3 configures at boot.
 
-**Hazards encoded as comments in `omnis_pins.h`:** FR_STEP on GPIO40 (an EdgeHax
-LED pin — the planning doc advised against a STEP line there), RL_DIR on
+**Current revised-board mapping encoded in `omnis_pins.h`:** FR_STEP on GPIO1 and
+BR_DIR on GPIO2; the earlier GPIO40/GPIO42 labels were superseded by the physical
+PCB reroute. RL_DIR remains on
 strapping pin GPIO46, and GPIO38–42 depending on GPIO3 staying NC.
 
 ### Decisions

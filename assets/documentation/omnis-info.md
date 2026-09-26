@@ -122,8 +122,8 @@ The name is deliberately left open-ended (not tied to "car" or "stepper" specifi
 
 | GPIO | Schematic net | Connects to | Notes |
 |---|---|---|---|
-| 1 | B_UP | Up button | Active-HIGH, external pull-down (§3d). Freed by removing COM_ENA |
-| 2 | B_DOWN | Down button | Active-HIGH |
+| 1 | FR_STEP | Front-Right A4988 STEP | Revised PCB routing |
+| 2 | BR_DIR | Rear-Right A4988 DIR | Revised PCB routing |
 | 4 | FL_STEP | Front-Left A4988 STEP | |
 | 5 | FL_DIR | Front-Left A4988 DIR | |
 | 6 | BATT_SENSE | Battery divider | ADC1_CH5 — §3g |
@@ -137,9 +137,7 @@ The name is deliberately left open-ended (not tied to "car" or "stepper" specifi
 | 21 | BR_STEP | Rear-Right ("back-right") A4988 STEP | Firmware name `RR` |
 | 38 | FR_DIR | Front-Right A4988 DIR | The one clean pin of 35–38 on N16R8 |
 | 39 (MTCK) | B_SF | Special-function button | Plain GPIO because GPIO3 is NC (§3e) |
-| 40 (MTDO) | FR_STEP | Front-Right A4988 STEP | **EdgeHax S3 Pro orange-LED pin** — §3e |
 | 41 (MTDI) | B_LEFT | Left button | EdgeHax white-LED pin |
-| 42 (MTMS) | BR_DIR | Rear-Right A4988 DIR | EdgeHax green-LED pin — LED shows wheel direction |
 | 46 | BL_DIR | Rear-Left A4988 DIR | **Strapping pin** — §3e |
 | 47 | B_RIGHT | Right button | |
 | 48 | B_SEL | Select button | |
@@ -172,7 +170,7 @@ Common rail is **3V3** (Rev 1.0 fed 5 V into GPIOs — fault E1). Each button ha
 
 - **GPIO46 carries BL_DIR.** GPIO46 is sampled at reset. The A4988 DIR input has no pull of its own, so the chip's internal pull-down wins and boot is normal. Nothing may drive BL_DIR high during reset.
 - **GPIO39–42 are the JTAG pins.** They behave as GPIO because the JTAG-source strap, GPIO3, is NC. The Rev 1.0 hazard (B_SF on GPIO3, so holding the button through power-on handed four driver pins to JTAG) is gone by construction.
-- **GPIO40/41/42 drive the EdgeHax S3 Pro's orange/white/green LEDs.** The final schematic puts **FR_STEP on GPIO40**, which the planning doc specifically advised against. It works electrically — the LED adds ~1 mA of load and flickers with steps — but if the front-right wheel misbehaves at high step rates, suspect this first. An Espressif DevKitC-1 has no LEDs on these pins.
+- **FR_STEP is GPIO1 and BR_DIR is GPIO2 on the revised PCB.** Older documentation listed these motor signals on GPIO40 and GPIO42; the firmware follows the physical PCB routing.
 
 ### 3f. A4988 driver wiring (all four identical)
 
@@ -200,7 +198,7 @@ The planning doc predates the finished schematic. Where they disagree, **the sch
 
 | Net | Final schematic | Planning doc |
 |---|---|---|
-| FR_STEP | **GPIO40** | GPIO38 |
+| FR_STEP | **GPIO1** | GPIO38 |
 | FR_DIR | **GPIO38** | GPIO40 |
 | BL_DIR (RL_DIR) | **GPIO46** | GPIO41 |
 | B_SF | **GPIO39** | GPIO48 |

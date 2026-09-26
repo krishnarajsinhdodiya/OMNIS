@@ -20,7 +20,7 @@
  * schematic on seven nets. The schematic wins; the doc is older:
  *
  *     net          schematic   planning doc
- *     FR_STEP      40          38
+ *     FR_STEP       1          38
  *     FR_DIR       38          40
  *     BL_DIR       46          41
  *     B_SF         39          48
@@ -49,21 +49,17 @@
  * ------------------------------------------------------------------------ */
 #define PIN_FL_STEP             GPIO_NUM_4    /* FL_STEP */
 #define PIN_FL_DIR              GPIO_NUM_5    /* FL_DIR  */
-#define PIN_FR_STEP             GPIO_NUM_40  /* FR_STEP, onboard orange LED */
+#define PIN_FR_STEP             GPIO_NUM_1   /* FR_STEP */
 #define PIN_FR_DIR              GPIO_NUM_38   /* FR_DIR  */
 #define PIN_RL_STEP             GPIO_NUM_15   /* BL_STEP */
 #define PIN_RL_DIR              GPIO_NUM_46   /* BL_DIR, STRAPPING PIN */
 #define PIN_RR_STEP             GPIO_NUM_21   /* BR_STEP */
-#define PIN_RR_DIR              GPIO_NUM_2   /* BR_DIR, MTMS */
+#define PIN_RR_DIR              GPIO_NUM_2   /* BR_DIR */
 
 /* Pin hazards worth knowing before a wheel misbehaves:
  *
- * GPIO40 (FR_STEP) drives the orange LED on the EdgeHax S3 Pro. The planning
- *   doc advised never putting a STEP line on an LED pin; the final schematic
- *   does. It works — the LED adds ~1 mA and flickers with steps — but if the
- *   front-right wheel misbehaves at high step rates, suspect this first. An
- *   Espressif DevKitC-1 has no LED on GPIO40. GPIO1 is intentionally free for
- *   the deferred B_UP button; it is not a motor pin on Rev 2.0.
+ * GPIO1 carries FR_STEP and GPIO2 carries BR_DIR on the revised PCB. Older
+ *   documentation listed these motor signals on GPIO40 and GPIO42.
  *
  * GPIO46 (RL_DIR) is a strapping pin sampled at reset. The A4988 DIR input has
  *   no pull of its own, so the chip's internal pull-down wins and the board
@@ -111,8 +107,6 @@
  * feature (BUILD-LOG.md, delivered-against-scope): deferred, not abandoned.
  *
  *   GPIO 6        BATT_SENSE  33k/10k divider, ADC1_CH5
- *   GPIO 1        B_UP        button, active-HIGH, external 10k pull-down
- *   GPIO 2        B_DOWN      button
  *   GPIO 39       B_SF        button (MTCK)
  *   GPIO 41       B_LEFT      button (MTDI; EdgeHax white LED pin)
  *   GPIO 47       B_RIGHT     button
