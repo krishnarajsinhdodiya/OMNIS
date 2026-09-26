@@ -39,7 +39,7 @@ void omnis_params_defaults(omnis_params_t *p)
      * lost-step defence, and the correct value depends on the Vref current
      * limit that has not been set yet (§3f). Deliberately conservative.
      * ------------------------------------------------------------------- */
-    p->step.max_step_rate      = 7000.0f;
+    p->step.max_step_rate      = 500.0f;
     p->step.deadband_steps     = 20.0f;
     p->step.max_accel_steps_s2 = 20000.0f;
 

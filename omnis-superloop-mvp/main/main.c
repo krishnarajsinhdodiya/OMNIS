@@ -153,33 +153,48 @@ static bool kinematics_selftest(void)
     bool ok = true;
 
     const wheel_rates_t a = mecanum_inverse(200.0f, 0.0f, 0.0f, R, L, W);
-    ok = ok && near(a.fl, 3395.305f, T) && near(a.fr, 3395.305f, T)
-            && near(a.rl, 3395.305f, T) && near(a.rr, 3395.305f, T);
+    ok = ok && near(a.fl, 212.2066f, T) && near(a.fr, 212.2066f, T)
+            && near(a.rl, 212.2066f, T) && near(a.rr, 212.2066f, T);
+
     const wheel_rates_t b = mecanum_inverse(0.0f, 200.0f, 0.0f, R, L, W);
-    ok = ok && near(b.fl, -3395.305f, T) && near(b.fr, 3395.305f, T)
-            && near(b.rl, -3395.305f, T) && near(b.rr, 3395.305f, T);
-    /* Case C is the layout's signature: under parallel rollers a pure spin
-     * barely turns the rear pair (59 steps/s against 3845). An X-drive build
-     * would put 3845 on all four, so this line alone catches a stale port. */
+    ok = ok && near(b.fl, -212.2066f, T) && near(b.fr, 212.2066f, T)
+            && near(b.rl, -212.2066f, T) && near(b.rr, 212.2066f, T);
+
+    /* Pure spin under the parallel-roller layout. */
     const wheel_rates_t c = mecanum_inverse(0.0f, 0.0f, 1.0f, R, L, W);
-    ok = ok && near(c.fl, -3845.183f, T) && near(c.fr, 3845.183f, T)
-            && near(c.rl, -59.418f, T) && near(c.rr, 59.418f, T);
+    ok = ok && near(c.fl, -240.3239f, T) && near(c.fr, 240.3239f, T)
+            && near(c.rl, -3.7136f, T) && near(c.rr, 3.7136f, T);
+
     const wheel_rates_t d = mecanum_inverse(200.0f, 100.0f, 0.5f, R, L, W);
-    ok = ok && near(d.fl, -224.939f, T) && near(d.fr, 7015.550f, T)
-            && near(d.rl, 1667.944f, T) && near(d.rr, 5122.667f, T);
+    ok = ok && near(d.fl, -14.0587f, T)
+            && near(d.fr, 438.4719f, T)
+            && near(d.rl, 104.2465f, T)
+            && near(d.rr, 320.1667f, T);
+
     const body_vel_t fk = mecanum_forward(&d, R, L, W);
-    ok = ok && near(fk.vx, 200.0f, 0.01f) && near(fk.vy, 100.0f, 0.01f)
-            && near(fk.w, 0.5f, 1e-4f) && near(mecanum_null_space(&d), 0.0f, 0.01f);
-    /* vx = vy idles the LEFT SIDE (it idled the FL/RR diagonal under X-drive),
-     * and vx = -vy must idle the right. Checking both directions is what
-     * distinguishes "handedness correct" from "handedness mirrored". */
-    const wheel_rates_t diag = mecanum_inverse(200.0f, 200.0f, 0.0f, R, L, W);
+
+    ok = ok && near(fk.vx, 200.0f, 0.01f)
+            && near(fk.vy, 100.0f, 0.01f)
+            && near(fk.w, 0.5f, 1e-4f)
+            && near(mecanum_null_space(&d), 0.0f, 0.01f);
+
+    /* vx = vy idles the LEFT SIDE. */
+    const wheel_rates_t diag =
+        mecanum_inverse(200.0f, 200.0f, 0.0f, R, L, W);
+
     ok = ok && diag.fl == 0.0f && diag.rl == 0.0f;
-    const wheel_rates_t anti = mecanum_inverse(200.0f, -200.0f, 0.0f, R, L, W);
+
+    /* vx = -vy idles the RIGHT SIDE. */
+    const wheel_rates_t anti =
+        mecanum_inverse(200.0f, -200.0f, 0.0f, R, L, W);
+
     ok = ok && anti.fr == 0.0f && anti.rr == 0.0f;
 
-    ESP_LOGI(TAG, "kinematics self-check (cases A-D, round trip, null space, side idle): %s",
+    ESP_LOGI(TAG,
+             "kinematics self-check (full-step cases A-D, round trip, "
+             "null space, side idle): %s",
              ok ? "PASS" : "*** FAIL ***");
+
     return ok;
 }
 
