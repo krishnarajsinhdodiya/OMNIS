@@ -8,9 +8,8 @@
  * called from the superloop, never from an ISR.
  *
  * Health tracking lives here because this is the only layer that can see it.
- * On board Rev 2.0 the two INT pins share one line, so a dead IMU cannot be
- * detected from its interrupt; it has to be detected from I2C errors and from
- * data that stops changing.
+ * The data-ready interrupt is not connected, so a dead IMU is detected from
+ * I2C errors and from data that stops changing.
  */
 
 #ifndef MPU6050_H
