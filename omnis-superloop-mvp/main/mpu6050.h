@@ -31,6 +31,7 @@ typedef struct {
     i2c_master_dev_handle_t dev;
     uint8_t  addr;
     uint8_t  who_am_i;                       /**< identity read at configure   */
+    mpu_device_type_t device_type;           /**< type of the device           */
     bool     configured;
     uint8_t  last_burst[MPU6050_BURST_LEN];  /**< for frozen-data detection    */
     uint32_t read_errors;                    /**< total, since boot            */

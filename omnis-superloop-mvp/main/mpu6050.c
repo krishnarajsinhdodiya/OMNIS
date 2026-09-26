@@ -12,13 +12,11 @@
 
 static const char *TAG = "mpu6050";
 
-/* Boot-time transfers can afford to wait. Per-tick reads cannot: at 400 kHz a
- * 1+14 byte transaction is well under 1 ms, so a 5 ms timeout only fires on a
- * genuinely broken bus — and when it does, it costs a couple of ticks rather
- * than stalling the control loop indefinitely. */
+/* Boot-time transfers can afford to wait. Per-tick reads use a generous
+ * timeout because the known-good standalone diagnostic also uses 100 ms.
+ * The actual loop timing is monitored separately by the supervisor. */
 #define BOOT_TIMEOUT_MS     50
-#define READ_TIMEOUT_MS     5
-
+#define READ_TIMEOUT_MS     100
 static esp_err_t write_reg(mpu6050_t *m, uint8_t reg, uint8_t val, int timeout_ms)
 {
     const uint8_t buf[2] = { reg, val };
@@ -74,18 +72,36 @@ esp_err_t mpu6050_configure(mpu6050_t *m)
     /* 2. Identity. */
     err = read_reg(m, MPU6050_REG_WHO_AM_I, &m->who_am_i, 1, BOOT_TIMEOUT_MS);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "0x%02X: WHO_AM_I read failed: %s", m->addr, esp_err_to_name(err));
+        ESP_LOGE(TAG,
+                 "0x%02X: WHO_AM_I read failed: %s",
+                 m->addr,
+                 esp_err_to_name(err));
         return err;
     }
+
     if (!mpu6050_who_am_i_compatible(m->who_am_i)) {
-        ESP_LOGE(TAG, "0x%02X: WHO_AM_I = 0x%02X is not an MPU6050-compatible part",
-                 m->addr, m->who_am_i);
+        ESP_LOGE(TAG,
+                 "0x%02X: WHO_AM_I = 0x%02X is not an MPU6050-compatible part",
+                 m->addr,
+                 m->who_am_i);
         return ESP_ERR_NOT_FOUND;
     }
-    if (m->who_am_i != MPU6050_WHO_AM_I_GENUINE) {
-        ESP_LOGW(TAG, "0x%02X: WHO_AM_I = 0x%02X - not a genuine MPU6050 (common "
-                      "on GY-521 clones). Register-compatible for everything used "
-                      "here; continuing.", m->addr, m->who_am_i);
+
+    m->device_type =
+        mpu6050_device_type_from_who_am_i(m->who_am_i);
+
+    if (m->device_type == MPU_DEVICE_UNKNOWN) {
+        ESP_LOGW(TAG,
+                 "0x%02X: compatible WHO_AM_I 0x%02X has no specific device type; "
+                 "using generic MPU-compatible handling",
+                 m->addr,
+                 m->who_am_i);
+    } else {
+        ESP_LOGI(TAG,
+                 "0x%02X: detected %s (WHO_AM_I 0x%02X)",
+                 m->addr,
+                 mpu6050_device_type_name(m->device_type),
+                 m->who_am_i);
     }
 
     /* 3. Wake, clocked from the X-gyro PLL. The PLL needs tens of ms to lock. */
@@ -151,19 +167,47 @@ esp_err_t mpu6050_read(mpu6050_t *m, mpu6050_sample_t *out)
     uint8_t burst[MPU6050_BURST_LEN];
 
     esp_err_t err = mpu6050_read_raw(m, burst);
-    if (err == ESP_OK && !mpu6050_burst_plausible(burst)) {
-        err = ESP_ERR_INVALID_RESPONSE;
-    }
+
     if (err != ESP_OK) {
         ++m->read_errors;
         ++m->consecutive_errors;
+
+        if (m->read_errors <= 3) {
+            ESP_LOGE(TAG,
+                    "0x%02X: I2C burst transaction FAILED: %s",
+                    m->addr,
+                    esp_err_to_name(err));
+        }
+
         return err;
     }
 
-    /* Frozen-data detection. A live MPU6050's noise floor guarantees the 14
-     * bytes change every sample; a latched or reset-looping part repeats them.
-     * With the shared INT line this is one of only two ways to notice a dead
-     * IMU at all. */
+    if (!mpu6050_burst_plausible(burst)) {
+        ++m->read_errors;
+        ++m->consecutive_errors;
+
+        if (m->read_errors <= 3) {
+            ESP_LOGE(TAG,
+                     "0x%02X: raw burst INVALID: "
+                     "%02X %02X %02X %02X %02X %02X "
+                     "%02X %02X %02X %02X %02X %02X "
+                     "%02X %02X",
+                     m->addr,
+                     burst[0],  burst[1],
+                     burst[2],  burst[3],
+                     burst[4],  burst[5],
+                     burst[6],  burst[7],
+                     burst[8],  burst[9],
+                     burst[10], burst[11],
+                     burst[12], burst[13]);
+        }
+
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /*
+     * Frozen-data detection.
+     */
     if (memcmp(burst, m->last_burst, MPU6050_BURST_LEN) == 0) {
         ++m->identical_bursts;
     } else {
@@ -172,6 +216,12 @@ esp_err_t mpu6050_read(mpu6050_t *m, mpu6050_sample_t *out)
     }
 
     m->consecutive_errors = 0;
-    mpu6050_parse_burst(burst, out);
+
+    mpu6050_parse_burst(
+        burst,
+        m->device_type,
+        out
+    );
+
     return ESP_OK;
 }

@@ -56,7 +56,7 @@ int main(void)
     put16(&b[12],     0);    /* GZ = 0                                 */
 
     mpu6050_sample_t s;
-    mpu6050_parse_burst(b, &s);
+    mpu6050_parse_burst(b, MPU_DEVICE_6050, &s);
     chk("accel X  [g]", s.accel_g[0],  1.0, 1e-6);
     chk("accel Y  [g]", s.accel_g[1], -0.5, 1e-6);
     chk("accel Z  [g]", s.accel_g[2],  0.0, 1e-6);
@@ -68,7 +68,7 @@ int main(void)
     puts("\nFull-scale limits");
     put16(&b[0], 32767);
     put16(&b[8], -32768);
-    mpu6050_parse_burst(b, &s);
+    mpu6050_parse_burst(b, MPU_DEVICE_6050, &s);
     chk("accel +full scale ~ +4 g", s.accel_g[0], 32767.0 / 8192.0, 1e-5);
     chk("gyro  -full scale ~ -500 deg/s [deg/s]",
         s.gyro_radps[0] * 180.0 / M_PI, -32768.0 / 65.5, 1e-2);

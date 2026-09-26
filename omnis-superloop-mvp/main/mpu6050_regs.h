@@ -81,16 +81,61 @@ typedef struct {
  * 0x00 and 0xFF are rejected: those are a dead bus or a device that did not
  * drive the line, never a real identity.
  */
-static inline bool mpu6050_who_am_i_compatible(uint8_t who)
+typedef enum {
+    MPU_DEVICE_UNKNOWN = 0,
+    MPU_DEVICE_6050,
+    MPU_DEVICE_6500,
+    MPU_DEVICE_6515,
+} mpu_device_type_t;
+
+static inline mpu_device_type_t
+mpu6050_device_type_from_who_am_i(uint8_t who)
 {
     switch (who) {
-        case 0x68:   /* MPU6050 */
-        case 0x70:   /* MPU6500 */
-        case 0x71:   /* MPU9250 */
-        case 0x72:   /* MPU6555 / clone */
-        case 0x73:   /* MPU9255 */
-        case 0x98:   /* clone seen on GY-521 boards */
+        case 0x68:
+            return MPU_DEVICE_6050;
+
+        case 0x70:
+            return MPU_DEVICE_6500;
+
+        case 0x74:
+            return MPU_DEVICE_6515;
+
+        default:
+            return MPU_DEVICE_UNKNOWN;
+    }
+}
+
+static inline const char *
+mpu6050_device_type_name(mpu_device_type_t type)
+{
+    switch (type) {
+        case MPU_DEVICE_6050:
+            return "MPU6050";
+
+        case MPU_DEVICE_6500:
+            return "MPU6500";
+
+        case MPU_DEVICE_6515:
+            return "MPU6515";
+
+        default:
+            return "UNKNOWN";
+    }
+}
+
+ static inline bool mpu6050_who_am_i_compatible(uint8_t who)
+{
+    switch (who) {
+        case 0x68:  /* MPU6050 */
+        case 0x70:  /* MPU6500 */
+        case 0x71:  /* MPU9250 */
+        case 0x72:
+        case 0x73:
+        case 0x74:  /* MPU6515 */
+        case 0x98:
             return true;
+
         default:
             return false;
     }
@@ -109,16 +154,31 @@ static inline int16_t mpu6050_be16(const uint8_t *p)
  * follow the full-scale settings above; change those and these divisors must
  * change with them.
  */
-static inline void mpu6050_parse_burst(const uint8_t b[MPU6050_BURST_LEN],
-                                       mpu6050_sample_t *s)
+static inline void mpu6050_parse_burst(
+    const uint8_t b[MPU6050_BURST_LEN],
+    mpu_device_type_t type,
+    mpu6050_sample_t *s)
 {
     for (int i = 0; i < 3; ++i) {
         s->accel_g[i]    = (float)mpu6050_be16(&b[2 * i]) / MPU6050_ACCEL_LSB_PER_G;
         s->gyro_radps[i] = (float)mpu6050_be16(&b[8 + 2 * i])
                            / MPU6050_GYRO_LSB_PER_DPS * MPU6050_DEG_TO_RAD;
     }
-    /* MPU6050 datasheet formula. MPU6500-family parts use /333.87 + 21. */
-    s->temp_c = (float)mpu6050_be16(&b[6]) / 340.0f + 36.53f;
+    const int16_t temp_raw = mpu6050_be16(&b[6]);
+    switch (type) {
+        case MPU_DEVICE_6050:
+            s->temp_c = (float)temp_raw / 340.0f + 36.53f;
+            break;
+
+        case MPU_DEVICE_6500:
+        case MPU_DEVICE_6515:
+            s->temp_c = (float)temp_raw / 333.87f + 21.0f;
+            break;
+
+        default:
+            s->temp_c = 0.0f;
+            break;
+    }
 }
 
 /**

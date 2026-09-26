@@ -97,15 +97,15 @@ bool imu_init(const omnis_params_t *p)
     s_unit[1].mount = OMNIS_IMU_B_MOUNT;
 
     const i2c_master_bus_config_t bus_cfg = {
-        .i2c_port          = -1,
+        .i2c_port          = I2C_NUM_0,
         .sda_io_num        = PIN_I2C_SDA,
         .scl_io_num        = PIN_I2C_SCL,
-        .clk_source        = I2C_CLK_SRC_DEFAULT,
+        .clk_source        = I2C_CLK_SRC_RC_FAST,
         .glitch_ignore_cnt = 7,
-        /* The GY-521 modules carry 4.7 k pull-ups; the ~45 k internal ones in
-         * parallel change nothing electrically but keep the bus defined if the
-         * module pull-ups are lifted as the Rev 2.0 plan suggests. */
-        .flags.enable_internal_pullup = true,
+        .flags = {
+            .enable_internal_pullup = false,
+            .allow_pd = false,
+        },
     };
     esp_err_t err = i2c_new_master_bus(&bus_cfg, &s_bus);
     if (err != ESP_OK) {
