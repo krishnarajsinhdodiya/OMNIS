@@ -294,12 +294,11 @@ All real board work happens natively.
 | Stage (superloop MVP) | Built + host-tested | Verified on hardware |
 |---|---|---|
 | 1 Timing spine | ✅ | ✅ 2026-09-07 (Rev 1 board): 500 Hz, zero overruns |
-| 2 Kinematics | ✅ | boot self-check passed on the FPU |
-| 3 IMUs + EKF | ✅ | ⬜ |
-| 4 Radio | ✅ | ⬜ |
-| 5 Step generation | ✅ | ⬜ |
-| 6 Faults + supervisor | ✅ | ⬜ |
-| 7 Balance | ✅ | ⬜ |
+| 2 Kinematics | ✅ | ✅ boot self-check passed on the FPU |
+| 3 IMUs + EKF | ✅ | ✅ |
+| 4 Radio | ✅ | ✅ |
+| 5 Step generation | ✅ | ✅ |
+| 6 Faults + supervisor | ✅ | ✅ |
 
 Not known until the assembled Rev 2.0 board runs: real I²C time per tick, IMU
 mounting descriptors, motor `DIR` polarities, radio channel order, and every
